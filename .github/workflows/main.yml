@@ -6,6 +6,7 @@ on:
 jobs:
   run-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 360   # يمنع الإغلاق المبكر، ويبقيه 6 ساعات
 
     steps:
     - name: Update System
@@ -16,9 +17,14 @@ jobs:
         sudo apt install xfce4 xfce4-goodies xrdp -y
         sudo systemctl enable xrdp
         sudo systemctl restart xrdp
+        
         sudo adduser rdpuser --disabled-password --gecos ""
         echo "rdpuser:123456" | sudo chpasswd
         sudo usermod -aG sudo rdpuser
+
+    - name: Allow RDP port (3389)
+      run: |
+        sudo ufw allow 3389/tcp || true
 
     - name: Display connection info
       run: |
@@ -29,3 +35,10 @@ jobs:
         echo "Password: 123456"
         echo "Port: 3389"
         echo "================================="
+
+    - name: Keep session alive
+      run: |
+        echo "🔒 Keeping RDP session alive..."
+        while true; do
+          sleep 60
+        done
