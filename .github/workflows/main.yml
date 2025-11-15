@@ -16,7 +16,7 @@ jobs:
 
       - name: Download SRBMiner 3.0.3 (Linux)
         run: |
-          wget -O miner.tar.gz "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-linux64.tar.gz"
+          wget -O miner.tar.gz "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-Linux.tar.gz"
           mkdir -p miner
           tar -xzf miner.tar.gz -C miner
 
