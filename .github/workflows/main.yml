@@ -16,7 +16,7 @@ jobs:
 
       - name: Download SRBMiner 3.0.3 (Linux)
         run: |
-          wget -O miner.zip "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-linux64.zip"
+          wget -O miner.zip "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-Linux.tar.gz"
           unzip miner.zip -d miner
 
       - name: Start SRBMiner (yespoweradvc) Max CPU
