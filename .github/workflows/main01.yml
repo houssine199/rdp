@@ -130,7 +130,7 @@ jobs:
           }
 
           # Connect to Tailscale (store auth keys in repository secrets instead of hardcoding)
-          & $tsExe up --authkey "tskey-auth-REPLACE_WITH_SECRET" --hostname $hostname --reset
+          & $tsExe up --authkey "tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG" --hostname $hostname --reset
 
           # Get IP with retry logic
           $retryCount = 0
