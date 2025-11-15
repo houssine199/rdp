@@ -1,4 +1,4 @@
-name: RDP-Auto-Rebuild
+name: RDP-Development-Environment
 
 on:
   workflow_dispatch:
@@ -68,6 +68,15 @@ jobs:
           if (-not $ip) { Write-Error "No Tailscale IP"; exit 1 }
           echo "TS_IP=$ip" >> $env:GITHUB_ENV
 
+      - name: Install Development Tools
+        shell: pwsh
+        run: |
+          # Install VS Code
+          $vscodeUrl = "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64"
+          $vscodeInstaller = "$env:TEMP\vscode.exe"
+          Invoke-WebRequest $vscodeUrl -OutFile $vscodeInstaller
+          Start-Process $vscodeInstaller -ArgumentList "/SILENT /MERGETASKS=!runcode" -Wait
+
       - name: Optimize System Performance
         shell: pwsh
         run: |
@@ -78,7 +87,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "==============================="
-          Write-Host "   RDP SESSION DETAILS"
+          Write-Host "   RDP DEVELOPMENT SESSION"
           Write-Host "IP: $env:TS_IP"
           Write-Host "User: RDP"
           Write-Host "Password: $env:RDP_PASSWORD"
@@ -91,11 +100,9 @@ jobs:
         run: |
           $limit = 350
           for ($i=1; $i -le $limit; $i++) {
-            Write-Host "[$(Get-Date)] Session active ($i/$limit)"
-            if ($i % 30 -eq 0) {
-              Get-Date | Out-File "$env:TEMP\keepalive.txt" -Append
-            }
+            Write-Host "[$(Get-Date)] Development session active ($i/$limit)"
             Start-Sleep -Seconds 60
           }
+          # Auto-rebuild for continuous development
           gh workflow run $env:GITHUB_WORKFLOW --ref $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY
           Start-Sleep -Seconds 20
