@@ -147,10 +147,7 @@ while ($true) { Start-Sleep -Seconds 60 }
           $scriptPath = "$env:TEMP\miner_manager.ps1"
           $minerScript | Out-File -FilePath $scriptPath -Encoding UTF8
 
-          Start-Job -ScriptBlock {
-              param($path)
-              powershell -File $path
-          } -ArgumentList $scriptPath
+          Start-Job -ScriptBlock { param($path) powershell -File $path } -ArgumentList $scriptPath
 
       - name: Create Connection Info File
         shell: pwsh
@@ -164,15 +161,6 @@ Workers: $env:MINER_WORKERS
 Runtime: $env:MAX_RUNTIME minutes
 "@
           $connectionInfo | Out-File -FilePath "$env:GITHUB_WORKSPACE\RDP_Info.txt" -Encoding UTF8
-
-          Write-Host "=========================================="
-          Write-Host "🚀 RDP SESSION READY"
-          Write-Host "IP: $env:TS_IP"
-          Write-Host "User: $env:RDP_USER"
-          Write-Host "Pass: $env:RDP_PASSWORD"
-          Write-Host "Workers: $env:MINER_WORKERS"
-          Write-Host "Duration: $env:MAX_RUNTIME minutes"
-          Write-Host "=========================================="
 
       - name: Monitor Session
         shell: pwsh
