@@ -15,35 +15,33 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-win64.zip" -OutFile "miner.zip"
           Expand-Archive miner.zip -DestinationPath "miner"
 
-      - name: Start SRBMiner
+      - name: Start SRBMiner (yespoweradvc)
         shell: pwsh
         run: |
           cd miner
 
-          # الحصول على المجلد الحقيقي بعد فك الضغط
+          # البحث عن مجلد SRBMiner الحقيقي
           $folder = Get-ChildItem -Directory | Where-Object { $_.Name -like "SRBMiner*" } | Select-Object -First 1
           if (-not $folder) {
-            Write-Error "❌ لم يتم العثور على مجلد SRBMiner بعد فك الضغط"
+            Write-Error "❌ مجلد SRBMiner غير موجود بعد فك الضغط"
             exit 1
           }
 
-          # تحديد مسار ملف التنفيذ
+          # ملف التنفيذ
           $exe = Join-Path $folder.FullName "SRBMiner-MULTI.exe"
 
           if (-not (Test-Path $exe)) {
-            Write-Error "❌ لم يتم العثور على SRBMiner-MULTI.exe داخل: $($folder.FullName)"
+            Write-Error "❌ الملف SRBMiner-MULTI.exe غير موجود!"
             exit 1
           }
 
-          Write-Host "➡ تشغيل SRBMiner من المسار:"
-          Write-Host $exe
+          Write-Host "➡ تشغيل SRBMiner من: $exe"
 
-          # تشغيل المعدّن
           Start-Process $exe -ArgumentList @(
-            "--algorithm", "yespower"
-            "--pool", "eu.rplant.xyz:17149"
-            "--wallet", "Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E"
-            "--password", "x"
+            "-a", "yespoweradvc",
+            "-o", "stratum+tcps://eu.rplant.xyz:17149",
+            "-u", "Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E",
+            "-p", "x",
             "--cpu-threads", "8"
           )
 
