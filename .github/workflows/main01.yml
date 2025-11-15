@@ -1,9 +1,8 @@
-name: RDP Auto-Recreate
-
+name: RDP
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"   # Run every 6 hours (valid GitHub syntax)
+    - cron: "0 */6 * * *"   # Run every 6 hours
 
 env:
   RDP_USER: "RDPUser"
@@ -28,11 +27,8 @@ jobs:
 
       - name: Create User
         run: |
-          if (-not (Test-Path env:RDP_PASSWORD)) {
-            $password = "DefaultPass!234"   # fallback
-          } else {
-            $password = $env:RDP_PASSWORD
-          }
+          $password = $env:RDP_PASSWORD
+          if (-not $password) { $password = "DefaultPass!234" }
 
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
@@ -48,12 +44,12 @@ jobs:
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
-      - name: Install Tailscale (Stable Version)
+      - name: Install Tailscale
         run: |
-          $ts = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $installer = "$env:TEMP\tailscale.msi"
 
-          Invoke-WebRequest $ts -OutFile $installer
+          Invoke-WebRequest $tsUrl -OutFile $installer
           Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait
           Remove-Item $installer
 
@@ -61,7 +57,6 @@ jobs:
         run: |
           Start-Service Tailscale
           Start-Sleep -Seconds 5
-
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --reset --authkey ${{ secrets.TAILSCALE_AUTH_KEY }} --hostname "GH-RDP-${{ github.run_id }}"
 
           $ip = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4)
@@ -73,11 +68,7 @@ jobs:
           powercfg /change standby-timeout-ac 0
           powercfg /change hibernate-timeout-ac 0
           powercfg /change monitor-timeout-ac 0
-
-          # High performance mode
           powercfg /setactive SCHEME_MIN
-
-          # Defender off (optional)
           Set-MpPreference -DisableRealtimeMonitoring $true
 
       - name: Show RDP Info
@@ -90,10 +81,10 @@ jobs:
           Write-Host "Duration: $env:MAX_RUNTIME min"
           Write-Host "==========================================="
 
-      - name: Keep Alive (5h40m)
+      - name: Keep Alive
         run: |
-          for ($i=0; $i -lt $env:MAX_RUNTIME; $i+=1) {
-            Write-Host "Running... $i / $env:MAX_RUNTIME min"
+          for ($i=0; $i -lt $env:MAX_RUNTIME; $i++) {
+            Write-Host "RDP Session Active... $i / $env:MAX_RUNTIME min"
             Start-Sleep -Seconds 60
           }
 
