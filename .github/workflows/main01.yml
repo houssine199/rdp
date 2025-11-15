@@ -56,7 +56,7 @@ jobs:
         shell: pwsh
         run: |
           $tsExe="$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tsExe up --authkey "tskey-auth-k4g3ZuqNv411CNTRL-R3HmBSbMoE3MepZpNrhGF3sypWXQeDyy" `
+          & $tsExe up --authkey "tskey-auth-kHns77euAR11CNTRL-4UWSQMYj2Q8EQh5XSN8uP8mv6WpGbUo3" `
             --hostname runner-$env:GITHUB_RUN_ID --reset
 
           $ip=$null
